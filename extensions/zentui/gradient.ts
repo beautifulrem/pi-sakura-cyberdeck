@@ -194,7 +194,10 @@ export function toneRgb(color: RGB, amount: number): RGB {
 	return mix(color, [20, 16, 28], Math.min(1, -amount));
 }
 
-/** Add symmetric colored side rails while preserving the terminal width contract. */
+/**
+ * Side rails + body. Always keep left/right chrome fully visible.
+ * Never append "..." — outer truncate defaults to "..." and looks like junk on every row.
+ */
 export function renderBoxedLine(
 	line: string,
 	width: number,
@@ -204,8 +207,20 @@ export function renderBoxedLine(
 	if (width <= 0) return "";
 	const leftWidth = visibleWidth(leftRail);
 	const rightWidth = visibleWidth(rightRail);
-	const innerWidth = Math.max(0, width - leftWidth - rightWidth);
-	const content = truncateToWidth(line, innerWidth, "");
-	const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(content)));
-	return truncateToWidth(`${leftRail}${content}${padding}${rightRail}`, width, "");
+	// If rails alone exceed width, prefer left rail only.
+	if (leftWidth + rightWidth > width) {
+		return truncateToWidth(leftRail, width, "");
+	}
+	const innerWidth = width - leftWidth - rightWidth;
+	// Drop predecessor trailing ellipsis noise (… or ...) before boxing.
+	let plainish = line.replace(/(?:…|\.\.\.)\s*$/u, "");
+	let content = truncateToWidth(plainish, innerWidth, "");
+	// Hard-fit: empty ellipsis can still leave SGR; ensure visible width ≤ inner.
+	while (visibleWidth(content) > innerWidth && content.length > 0) {
+		// Peel last non-ANSI char roughly by re-truncating shorter.
+		content = truncateToWidth(content, Math.max(0, visibleWidth(content) - 1), "");
+	}
+	const pad = Math.max(0, innerWidth - visibleWidth(content));
+	// Assemble without a second truncate-to-width (avoids default "..." if ever miscounted).
+	return `${leftRail}${content}${" ".repeat(pad)}${rightRail}`;
 }

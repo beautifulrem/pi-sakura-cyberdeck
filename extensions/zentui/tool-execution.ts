@@ -12,6 +12,7 @@ import {
 	fg,
 	stripAnsi,
 } from "./tool-body-polish";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import {
 	renderBoxedLine,
 	renderSakuraFrameGradient,
@@ -160,10 +161,11 @@ export function installToolExecutionStyle(getTheme: () => Theme | undefined): Cl
 			});
 			const statsText = formatStats(polished.stats);
 			const label = fitBorderLabel(statusLabel(runtime, statsText), width);
-			const top = renderSakuraFrameGradient(label);
 			const leftRail = leftRailFor(runtime, theme);
-			const rightRail = renderSakuraSolid(" │"); // same sakura as left corner
-			const bottom = renderSakuraFrameGradient(bottomBorder(width));
+			const rightRail = renderSakuraSolid("│"); // single cell — no leading space (was " │", ate width)
+			// Fit chrome to exact width without ellipsis.
+			const top = truncateToWidth(renderSakuraFrameGradient(label), width, "");
+			const bottom = truncateToWidth(renderSakuraFrameGradient(bottomBorder(width)), width, "");
 			const boxed = [
 				...prefix,
 				top,
