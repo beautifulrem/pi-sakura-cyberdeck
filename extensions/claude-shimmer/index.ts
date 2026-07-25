@@ -130,8 +130,15 @@ function formatDuration(ms: number): string {
   return `${s}s`;
 }
 
-function formatCount(n: number): string {
-  return new Intl.NumberFormat("en-US").format(n);
+export function formatTokenCount(n: number): string {
+  const value = Math.max(0, Math.round(n));
+  const number = value < 1_000
+    ? new Intl.NumberFormat("en-US").format(value)
+    : new Intl.NumberFormat("en-US", {
+        notation: "compact",
+        maximumFractionDigits: 1,
+      }).format(value).replace("K", "k");
+  return `${number} ${value === 1 ? "token" : "tokens"}`;
 }
 
 /**
@@ -144,9 +151,87 @@ function animatedDots(frame: number): string {
   return cycle[Math.floor(frame / 8) % cycle.length]!;
 }
 
-/** Token digits — always sky (same as ↑/↓). No padding (user prefers tight HUD). */
-function styleTokenCount(n: number): string {
-  return rgbAnsi(SKY, formatCount(Math.max(0, Math.round(n))));
+/** Token count — always sky (same as ↑/↓); ~ marks live fallback estimates. */
+function styleTokenCount(n: number, estimated: boolean): string {
+  return rgbAnsi(SKY, `${estimated ? "~" : ""}${formatTokenCount(n)}`);
+}
+
+export type AssistantTokenMessage = {
+  content?: Array<{
+    type?: string;
+    text?: string;
+    thinking?: string;
+    name?: string;
+    arguments?: unknown;
+  }>;
+  usage?: {
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    totalTokens?: number;
+  };
+};
+
+export function reportedOutputTokens(
+  message: AssistantTokenMessage | undefined,
+  final = false,
+): number | null {
+  const usage = message?.usage;
+  const output = usage?.output;
+  if (typeof output !== "number" || !Number.isFinite(output) || output < 0) return null;
+  if (output > 0) return Math.round(output);
+  // Streaming messages start with a zero-filled Usage object. At message_end, non-zero
+  // input/cache/total proves the provider really reported usage, so output=0 is valid.
+  const hasFinalUsage = final && [
+    usage?.input,
+    usage?.cacheRead,
+    usage?.cacheWrite,
+    usage?.totalTokens,
+  ].some((value) => typeof value === "number" && value > 0);
+  return hasFinalUsage ? 0 : null;
+}
+
+const CJK_CHAR = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+const EMOJI_CHAR = /\p{Extended_Pictographic}/u;
+
+/** Quarter-token units make estimates additive across streamed deltas. */
+function estimateTextTokenUnits(text: string): number {
+  let units = 0;
+  for (const char of text) {
+    if (char.codePointAt(0)! <= 0x7f) units += 1; // ≈ 4 ASCII chars/token
+    else if (EMOJI_CHAR.test(char)) units += 8; // ≈ 2 tokens
+    else if (CJK_CHAR.test(char)) units += 4; // ≈ 1 token
+    else units += 2;
+  }
+  return units;
+}
+
+/** Better live fallback than chars/4 for CJK/emoji; final provider usage replaces it. */
+export function estimateTextTokens(text: string): number {
+  return Math.max(0, Math.ceil(estimateTextTokenUnits(text) / 4));
+}
+
+function estimateBlockTokenUnits(block: NonNullable<AssistantTokenMessage["content"]>[number]): number {
+  if (block.type === "text" && typeof block.text === "string") {
+    return estimateTextTokenUnits(block.text);
+  }
+  if (block.type === "thinking" && typeof block.thinking === "string") {
+    return estimateTextTokenUnits(block.thinking);
+  }
+  if (block.type === "toolCall") {
+    let text = block.name ?? "";
+    try {
+      text += JSON.stringify(block.arguments ?? {});
+    } catch {}
+    return estimateTextTokenUnits(text);
+  }
+  return 0;
+}
+
+export function estimateOutputTokens(message: AssistantTokenMessage | undefined): number {
+  const units = message?.content?.reduce((sum, block) => sum + estimateBlockTokenUnits(block), 0) ?? 0;
+  return Math.max(0, Math.ceil(units / 4));
 }
 
 // ─── Shimmer Engine ───────────────────────────────────────────────
@@ -227,20 +312,20 @@ export default function (pi: ExtensionAPI) {
   let thinkingStart = 0;
   let thinkingDuration: number | null = null;
   let thoughtSetAt = 0;
-  let responseLen = 0;
-  let currentAssistantLen = 0;
-  let currentTextBlockLen = 0;
-  let assistantMessageActive = false;
+  let completedOutputTokens = 0;
+  let currentEstimatedTokens = 0;
+  let currentReportedTokens: number | null = null;
+  const currentBlockTokenUnits = new Map<number, number>();
+  let currentEstimatedTokenUnits = 0;
   let lastTokenTime = 0;
   let turnActive = false;
   let activeToolCount = 0;
 
   // Stall smooth interpolation (0→1)
   let _stallFrame = 0;
-  // Response-length smooth animation; display converts chars → tokens.
-  let _displayedResponseLen = 0;
-  let _tokensRising = false;
-  let thinkingChars = 0;
+  // Smooth cumulative output-token animation. Provider usage can correct either direction.
+  let _displayedTokens = 0;
+  let _tokensMoving = false;
 
   // Timers
   let shimmerTimer: ReturnType<typeof setInterval> | null = null;
@@ -317,7 +402,8 @@ export default function (pi: ExtensionAPI) {
    */
   function buildStatusParts(): string[] {
     const elapsed = Date.now() - (agentStart || turnStart);
-    const tokens = Math.round(Math.max(0, _displayedResponseLen) / 4);
+    const tokens = Math.round(Math.max(0, _displayedTokens));
+    const estimated = currentReportedTokens === null && currentEstimatedTokens > 0;
     // Show token chip for any active stream phase (incl. requesting after start).
     const showTokens = turnActive || tokens > 0;
     // Clock once turn is live — same rules as tokens so fields appear together.
@@ -333,11 +419,11 @@ export default function (pi: ExtensionAPI) {
       parts.push(rgbAnsi(PETAL, formatDigital(thinkingDuration)));
     }
 
-    // 3) Tokens — ↑/↓ + digits, both sky; fixed width via styleTokenCount
+    // 3) Tokens — provider output usage; ~ means live fallback estimate.
     if (showTokens) {
       const arrow = mode === "requesting" ? ARROW_REQUESTING : ARROW_WORKING;
-      const num = styleTokenCount(tokens);
-      parts.push(`${rgbAnsi(SKY, arrow)} ${num}`);
+      const count = styleTokenCount(tokens, estimated);
+      parts.push(`${rgbAnsi(SKY, arrow)} ${count}`);
     }
 
     // 4) Wall clock — muted, fixed mm:ss
@@ -447,27 +533,26 @@ export default function (pi: ExtensionAPI) {
     stopTokenCounter();
   }
 
-  // Token counter runs on its own fixed 50ms clock, independent of the shimmer
-  // tick (which slows to 200ms while working). Keeps the counter smooth like
-  // Claude Code regardless of the shimmer speed.
+  // Token counter runs independently of shimmer. Completed turns use provider-reported
+  // output usage; current streaming turn uses reported usage when available, else estimate.
   function startTokenCounter() {
     if (tokenTimer) return;
     tokenTimer = setInterval(() => {
-      // Smooth chars → display tokens. Include thinking stream so the chip moves early.
-      const target = responseLen + thinkingChars;
-      if (_displayedResponseLen < target) {
-        const gap = target - _displayedResponseLen;
-        // Snappier ease so digits visibly roll (Claude/OpenCode feel)
-        const increment =
-          gap < 20 ? Math.max(1, gap) :
-          gap < 80 ? Math.max(4, Math.ceil(gap * 0.22)) :
-          gap < 300 ? Math.max(12, Math.ceil(gap * 0.18)) :
-          Math.max(40, Math.ceil(gap * 0.12));
-        _displayedResponseLen = Math.min(_displayedResponseLen + increment, target);
-        _tokensRising = true;
+      const current = currentReportedTokens ?? currentEstimatedTokens;
+      const target = Math.max(0, completedOutputTokens + current);
+      const gap = target - _displayedTokens;
+      if (gap !== 0) {
+        const distance = Math.abs(gap);
+        const step =
+          distance < 8 ? distance :
+          distance < 40 ? Math.max(2, Math.ceil(distance * 0.28)) :
+          distance < 200 ? Math.max(8, Math.ceil(distance * 0.2)) :
+          Math.max(24, Math.ceil(distance * 0.14));
+        _displayedTokens += Math.sign(gap) * Math.min(distance, step);
+        _tokensMoving = true;
         updateDisplay();
-      } else if (_tokensRising) {
-        _tokensRising = false;
+      } else if (_tokensMoving) {
+        _tokensMoving = false;
         updateDisplay();
       }
     }, TOKEN_COUNTER_MS);
@@ -528,6 +613,18 @@ export default function (pi: ExtensionAPI) {
     }, remaining);
   }
 
+  function setEstimatedBlock(index: number, units: number) {
+    const next = Math.max(0, units);
+    const previous = currentBlockTokenUnits.get(index) ?? 0;
+    currentBlockTokenUnits.set(index, next);
+    currentEstimatedTokenUnits += next - previous;
+    currentEstimatedTokens = Math.ceil(currentEstimatedTokenUnits / 4);
+  }
+
+  function appendEstimatedBlock(index: number, text: string) {
+    setEstimatedBlock(index, (currentBlockTokenUnits.get(index) ?? 0) + estimateTextTokenUnits(text));
+  }
+
   function resetTurn(resetOutput = false) {
     stopShimmer();
     if (thoughtTimer) {
@@ -537,15 +634,15 @@ export default function (pi: ExtensionAPI) {
     ctx_?.ui?.setWorkingMessage();
     mode = "requesting";
     thinkingDuration = null;
+    currentBlockTokenUnits.clear();
+    currentEstimatedTokenUnits = 0;
+    currentEstimatedTokens = 0;
+    currentReportedTokens = null;
     if (resetOutput) {
-      responseLen = 0;
-      _displayedResponseLen = 0;
-      thinkingChars = 0;
-      _tokensRising = false;
+      completedOutputTokens = 0;
+      _displayedTokens = 0;
+      _tokensMoving = false;
     }
-    currentAssistantLen = 0;
-    currentTextBlockLen = 0;
-    assistantMessageActive = false;
     _stallFrame = 0;
     lastTokenTime = 0;
     activeToolCount = 0;
@@ -588,13 +685,54 @@ export default function (pi: ExtensionAPI) {
   pi.on("message_update", async (event, ctx) => {
     ctx_ = ctx;
     const evt = event.assistantMessageEvent;
+    // Pi forwards only non-terminal stream events here; final usage arrives via message_end.
+    const tokenMessage = event.message as AssistantTokenMessage;
+    const reported = reportedOutputTokens(tokenMessage);
+    if (reported !== null) currentReportedTokens = reported;
+
+    // Incremental fallback estimate. Streams may interleave blocks, so key by contentIndex.
+    switch (evt.type) {
+      case "start":
+        currentBlockTokenUnits.clear();
+        currentEstimatedTokenUnits = 0;
+        currentEstimatedTokens = 0;
+        break;
+      case "text_start":
+      case "thinking_start":
+        setEstimatedBlock(evt.contentIndex, 0);
+        break;
+      case "text_delta":
+      case "thinking_delta":
+      case "toolcall_delta":
+        appendEstimatedBlock(evt.contentIndex, evt.delta);
+        break;
+      case "text_end":
+      case "thinking_end":
+        setEstimatedBlock(evt.contentIndex, estimateTextTokenUnits(evt.content));
+        break;
+      case "toolcall_start":
+        setEstimatedBlock(
+          evt.contentIndex,
+          tokenMessage.content?.[evt.contentIndex]
+            ? estimateBlockTokenUnits(tokenMessage.content[evt.contentIndex]!)
+            : 0,
+        );
+        break;
+      case "toolcall_end": {
+        let text = evt.toolCall.name;
+        try {
+          text += JSON.stringify(evt.toolCall.arguments ?? {});
+        } catch {}
+        setEstimatedBlock(evt.contentIndex, estimateTextTokenUnits(text));
+        break;
+      }
+    }
 
     switch (evt.type) {
       case "thinking_start":
         setMode("thinking");
         thinkingStart = Date.now();
         thinkingDuration = null;
-        thinkingChars = 0;
         if (thoughtTimer) {
           clearTimeout(thoughtTimer);
           thoughtTimer = null;
@@ -604,16 +742,9 @@ export default function (pi: ExtensionAPI) {
       case "thinking_delta":
         setMode("thinking");
         lastTokenTime = Date.now();
-        if (typeof (evt as { delta?: string }).delta === "string") {
-          thinkingChars += (evt as { delta: string }).delta.length;
-        }
         break;
 
       case "thinking_end":
-        if (typeof (evt as { content?: string }).content === "string") {
-          const content = (evt as { content: string }).content;
-          if (content.length > thinkingChars) thinkingChars = content.length;
-        }
         onThinkingEnd();
         break;
 
@@ -621,11 +752,6 @@ export default function (pi: ExtensionAPI) {
         if (mode !== "responding") {
           setMode("responding");
         }
-        if (!assistantMessageActive) {
-          assistantMessageActive = true;
-          currentAssistantLen = 0;
-        }
-        currentTextBlockLen = 0;
         lastTokenTime = Date.now();
         break;
 
@@ -634,51 +760,33 @@ export default function (pi: ExtensionAPI) {
           setMode("responding");
         }
         lastTokenTime = Date.now();
-        if (typeof evt.delta === "string") {
-          const len = evt.delta.length;
-          responseLen += len;
-          currentAssistantLen += len;
-          currentTextBlockLen += len;
-        }
         break;
 
       case "text_end":
-        if (typeof evt.content === "string") {
-          const missing = evt.content.length - currentTextBlockLen;
-          if (missing > 0) {
-            responseLen += missing;
-            currentAssistantLen += missing;
-          }
-          currentTextBlockLen = evt.content.length;
-        }
         break;
 
       case "toolcall_start":
         setMode("tool-input");
         break;
-
-      case "done":
-        // Claude Code: message_stop switches to tool-use;
-        // if no tools, just stay at responding
-        if (activeToolCount > 0) {
-          setMode("tool-use");
-        }
-        if (evt.message?.content) {
-          const finalAssistantLen = (evt.message.content as any[]).reduce(
-            (s: number, b: any) =>
-              s + (b.type === "text" && typeof b.text === "string" ? b.text.length : 0),
-            0,
-          );
-          const missing = finalAssistantLen - currentAssistantLen;
-          if (missing > 0) {
-            responseLen += missing;
-          }
-          currentAssistantLen = finalAssistantLen;
-        }
-        assistantMessageActive = false;
-        currentTextBlockLen = 0;
-        break;
     }
+  });
+
+  pi.on("message_end", async (event, ctx) => {
+    if (event.message.role !== "assistant") return;
+    ctx_ = ctx;
+    const finalMessage = event.message as AssistantTokenMessage;
+    const reported = reportedOutputTokens(finalMessage, true);
+    const estimated = estimateOutputTokens(finalMessage);
+    // Exactly once per finalized assistant message. This preserves totals across tool turns.
+    completedOutputTokens += reported ?? estimated;
+    currentBlockTokenUnits.clear();
+    currentEstimatedTokenUnits = 0;
+    currentEstimatedTokens = 0;
+    currentReportedTokens = null;
+    // Snap at provider completion so estimates can correct downward before tool execution.
+    _displayedTokens = completedOutputTokens;
+    _tokensMoving = false;
+    updateDisplay();
   });
 
   pi.on("tool_execution_start", async (_event, ctx) => {

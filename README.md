@@ -2,7 +2,7 @@
 
 Sakura Macaron visual pack for [Pi](https://pi.dev).
 
-**v1.1.2** — fixed-editor repaint fix; no hidden transcript gap after output completes.
+**v1.1.3** — provider-backed token HUD with compact, readable token labels.
 
 ## What’s inside
 
@@ -31,12 +31,13 @@ Sakura Macaron visual pack for [Pi](https://pi.dev).
 **Working line**
 
 ```text
-Whisking...  ( HIGH · ↓ 128 · 00:12 )
+Whisking...  ( HIGH · ↓ ~144 tokens · 00:12 )
 ```
 
 - Fixed-width dots, slow cycle
 - Effort: MINIMAL→MAX, tier-colored, stable for the turn
-- Tokens: sky `↑/↓` + number (no padding holes)
+- Tokens: sky `↑/↓` + readable count (`144 tokens`, `1.2k tokens`, `12.3k tokens`)
+- `~` marks the live estimate; finalized provider `usage.output` replaces it and accumulates across tool turns
 - Outer `( … )` with inner ` · ` (upstream pi-claude-shimmer layout)
 
 **History**
@@ -105,6 +106,13 @@ Recommended companion settings (optional, user-owned):
 Avoid stacking with `pi-zentui`, `pi-powerline-footer`, `@tifan/pi-fixed-editor`, stock `pi-claude-shimmer`, or a second copy of this pack. They share footer / working / editor surfaces.
 
 ## Changelog
+
+### 1.1.3
+
+- **Token HUD**: provider-reported `usage.output` is authoritative and accumulated across tool turns
+- Live stream fallback handles CJK/emoji better than raw `chars / 4`; `~` marks estimated values
+- Labels are readable and compact: `144 tokens`, `1.2k tokens`, `12.3k tokens`, `1.2M tokens`
+- Final usage can correct a live estimate downward instead of leaving an inflated count
 
 ### 1.1.2
 
