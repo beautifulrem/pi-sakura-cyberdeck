@@ -30,4 +30,28 @@ const requiredColors = [
 assert.equal(theme.name, "sakura-macaron");
 for (const color of requiredColors) assert.ok(color in theme.colors, `missing theme color: ${color}`);
 
+// Fixed-editor regression: when pinned cluster shrinks, rows above its new start
+// belong to transcript. paintCluster runs after transcript output and must not clear them.
+const compositor = await readFile(
+  resolve(root, "extensions/zentui/fixed-editor/compositor.ts"),
+  "utf8",
+);
+assert.match(compositor, /const clearStart = startRow;/);
+assert.doesNotMatch(
+  compositor,
+  /const clearStart = previous \? Math\.min\(previous\.startRow, startRow\)/,
+);
+const previousCluster = { startRow: 34, lineCount: 7 };
+const nextCluster = { startRow: 37, lineCount: 4 };
+const clearEnd = Math.max(
+  previousCluster.startRow + previousCluster.lineCount - 1,
+  nextCluster.startRow + nextCluster.lineCount - 1,
+);
+const postPaintClears = Array.from(
+  { length: clearEnd - nextCluster.startRow + 1 },
+  (_, index) => nextCluster.startRow + index,
+);
+assert.deepEqual(postPaintClears, [37, 38, 39, 40]);
+assert.equal(postPaintClears.some((row) => row >= 34 && row <= 36), false);
+
 console.log("pi-sakura-cyberdeck package check passed");

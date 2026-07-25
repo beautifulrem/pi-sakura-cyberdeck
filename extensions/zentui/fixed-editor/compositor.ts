@@ -596,7 +596,10 @@ export class TerminalSplitCompositor {
 				buf += cursorTo(startRow + i, 1) + clear + lines[i];
 			}
 		} else {
-			const clearStart = previous ? Math.min(previous.startRow, startRow) : startRow;
+			// Rows above startRow belong to the transcript now. `write()` calls this
+			// after Pi's transcript output, so clearing from previous.startRow when the
+			// cluster shrinks erases freshly rendered text until the next scroll/redraw.
+			const clearStart = startRow;
 			const clearEnd = previous
 				? Math.max(previous.startRow + previous.lines.length - 1, startRow + lines.length - 1)
 				: startRow + lines.length - 1;

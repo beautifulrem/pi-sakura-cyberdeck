@@ -2,7 +2,7 @@
 
 Sakura Macaron visual pack for [Pi](https://pi.dev).
 
-**v1.1.1** — tool-card ellipsis fix, tiered context gauge, macaron rails; builds on 1.1 chrome pack.
+**v1.1.2** — fixed-editor repaint fix; no hidden transcript gap after output completes.
 
 ## What’s inside
 
@@ -105,6 +105,12 @@ Recommended companion settings (optional, user-owned):
 Avoid stacking with `pi-zentui`, `pi-powerline-footer`, `@tifan/pi-fixed-editor`, stock `pi-claude-shimmer`, or a second copy of this pack. They share footer / working / editor surfaces.
 
 ## Changelog
+
+### 1.1.2
+
+- **Fixed editor**: output completion no longer leaves a blank gap hiding transcript text until scroll
+- Root cause: when pinned status/loader cluster shrank, its post-render cleanup erased rows already returned to the transcript
+- Cluster paint now clears only rows it still owns; focused regression check covers the shrink case
 
 ### 1.1.1
 
