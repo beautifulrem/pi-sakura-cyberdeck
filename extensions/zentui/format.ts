@@ -10,7 +10,7 @@ import type {
 	GitBranchMaxLength,
 	PathDisplayMode,
 } from "./config";
-import { renderMacaronGauge } from "./gradient";
+import { renderMacaronGauge, type GaugeTier } from "./gradient";
 import type { GitCommitInfo, GitMetricsInfo } from "./git";
 import type { IconMode } from "./icons";
 import { resolveOsIcon, resolvePackageIcon, resolveRuntimeSymbol } from "./icons";
@@ -247,6 +247,7 @@ export function buildContextGauge(
 	width = 10,
 	ascii = false,
 	phase = 0,
+	tier: GaugeTier = "normal",
 ): string {
 	if (ascii) {
 		const clamped = Math.max(0, Math.min(100, percent));
@@ -254,7 +255,7 @@ export function buildContextGauge(
 		return `${"#".repeat(filled)}${"-".repeat(Math.max(0, width - filled))}`;
 	}
 	// Strip frame — caller wraps with [] for text+gauge / gauge styles.
-	return renderMacaronGauge(percent, width, { phase, frame: false });
+	return renderMacaronGauge(percent, width, { phase, frame: false, tier });
 }
 
 export function formatContextPercentLabel(
@@ -276,8 +277,17 @@ export function buildContextDisplayLabel(options: {
 	asciiGauge?: boolean;
 	/** 0..1 pulse phase for macaron shimmer. */
 	phase?: number;
+	/** Align gauge palette with warning/error text tier. */
+	tier?: GaugeTier;
 }): string {
-	const { percent, contextWindow, style = "text", asciiGauge = false, phase = 0 } = options;
+	const {
+		percent,
+		contextWindow,
+		style = "text",
+		asciiGauge = false,
+		phase = 0,
+		tier = "normal",
+	} = options;
 	if (!contextWindow || contextWindow <= 0) return "--";
 
 	const text = formatContextPercentLabel(percent, contextWindow);
@@ -285,7 +295,7 @@ export function buildContextDisplayLabel(options: {
 		percent === null || percent === undefined || !Number.isFinite(percent)
 			? 0
 			: Math.max(0, Math.min(100, percent));
-	const gauge = buildContextGauge(numericPercent, 10, asciiGauge, phase);
+	const gauge = buildContextGauge(numericPercent, 10, asciiGauge, phase, tier);
 
 	if (style === "gauge") return `[${gauge}]`;
 	if (style === "text+gauge") return `[${gauge}] ${text}`;

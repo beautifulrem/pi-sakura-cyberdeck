@@ -257,14 +257,15 @@ export function installFooter(
 				const contextPercent = useLiveContext
 					? (liveContext.tokens / contextWindow) * 100
 					: contextUsage?.percent;
+				const tier = contextColorTier(contextPercent, config.contextThresholds);
 				const contextLabel = buildContextDisplayLabel({
 					percent: contextPercent,
 					contextWindow,
 					style: config.contextStyle,
 					asciiGauge: iconMode === "ascii",
 					phase,
+					tier,
 				});
-				const tier = contextColorTier(contextPercent, config.contextThresholds);
 				const contextColor =
 					tier === "error"
 						? config.colors.contextError
