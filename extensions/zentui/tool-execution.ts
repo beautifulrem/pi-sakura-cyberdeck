@@ -137,11 +137,12 @@ export function installToolExecutionStyle(getTheme: () => Theme | undefined): Cl
 				width <= 2 ||
 				lines.length === 0 ||
 				runtime.hideComponent ||
-				runtime.getRenderShell?.() === "self" ||
 				containsTerminalImage(lines)
 			) {
 				return lines;
 			}
+			// Note: also polish renderShell:"self" tools (edit/bash) — strip their full-width
+			// Box padding and re-frame so we never inherit right-edge "..." junk.
 
 			const theme = getTheme();
 			if (!theme) return lines;

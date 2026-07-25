@@ -36,19 +36,44 @@ export function stripAnsi(text: string): string {
 		.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
-/** Pi diff lines: `+12 text`, `+ 12 text`, `- 12 text`, `  12 text`, `   ...`. */
+/** Drop Box full-width padding / trailing spaces. */
+function plainTrim(text: string): string {
+	return text.replace(/[\t ]+$/g, "").replace(/^\s+$/g, "");
+}
+
+/** Drop trailing truncator junk only (long lines). Keep real `foo...`. */
+function stripTrailingEllipsis(text: string): string {
+	const t = text.replace(/[\t ]+$/g, "");
+	// Width-truncators leave ... on long padded rows; short code tails stay.
+	if (t.length >= 48 && /(?:\u2026|\.\.\.|…)$/u.test(t)) {
+		return t.replace(/(?:\u2026|\.\.\.|…)+$/u, "").replace(/[\t ]+$/g, "");
+	}
+	return t;
+}
+
+
+/**
+ * Pi edit-diff lines after stripAnsi:
+ *   `-12 text` / `+12 text` / ` 12 text` / `   ...`
+ * Box/Text paddingX often prefixes one space — strip that before match.
+ */
 export function parseDiffLine(
 	plain: string,
 ):
 	| { kind: "add" | "del" | "ctx"; lineNum: string; content: string }
 	| { kind: "ellipsis" }
 	| null {
-	const trimmedEnd = plain.replace(/\s+$/, "");
-	if (/^\s*\.{3}$/.test(trimmedEnd) || /^\s+\d*\s+\.{3}$/.test(trimmedEnd)) {
+	// Trim trailing pad; drop a single leading box-pad space (paddingX=1).
+	let line = plain.replace(/\s+$/g, "");
+	if (line.startsWith(" ") && (line[1] === "+" || line[1] === "-" || line[1] === " ")) {
+		line = line.slice(1);
+	}
+	// Collapsed context marker from edit-diff.js
+	if (/^\s*\d*\s*\.{3}$/.test(line) || line.trim() === "...") {
 		return { kind: "ellipsis" };
 	}
-
-	const signed = plain.match(/^([+-])\s*(\d+)?\s?(.*)$/);
+	// Pi native: +12 content  /  -12 content
+	const signed = line.match(/^([+-])(\d+) (.*)$/);
 	if (signed) {
 		return {
 			kind: signed[1] === "+" ? "add" : "del",
@@ -56,13 +81,20 @@ export function parseDiffLine(
 			content: signed[3] ?? "",
 		};
 	}
-
-	// Context: leading space + padded line number + optional " content"
-	const ctx = plain.match(/^ (\s*\d+)(?:\s(.*))?$/);
-	if (ctx) {
-		return { kind: "ctx", lineNum: (ctx[1] ?? "").trim(), content: ctx[2] ?? "" };
+	// Loose signed (optional spaces): + 12 content
+	const signedLoose = line.match(/^([+-])\s+(\d+)\s+(.*)$/);
+	if (signedLoose) {
+		return {
+			kind: signedLoose[1] === "+" ? "add" : "del",
+			lineNum: signedLoose[2] ?? "",
+			content: signedLoose[3] ?? "",
+		};
 	}
-
+	// Context: leading spaces + line number + content
+	const ctx = line.match(/^\s*(\d+) (.*)$/);
+	if (ctx) {
+		return { kind: "ctx", lineNum: ctx[1] ?? "", content: ctx[2] ?? "" };
+	}
 	return null;
 }
 
@@ -135,29 +167,28 @@ function styleDiffLine(
 	numWidth: number,
 	theme?: ThemeLike,
 ): string {
-	const dimBar = themeOr(theme, "dim", DIM_RGB, "│");
-
+	// Keep Pi-native shape: ±12 content  /  12 content  (no extra │ gutters — they ate width and caused ...)
 	if (parsed.kind === "ellipsis") {
-		const num = "·".repeat(numWidth);
-		return `${dimBar} ${themeOr(theme, "dim", DIM_RGB, num)} ${dimBar} ${themeOr(theme, "dim", DIM_RGB, "···")}`;
+		return themeOr(theme, "dim", DIM_RGB, ` ${" ".repeat(numWidth)} ···`);
 	}
 
 	const num = padLineNum(parsed.lineNum, numWidth);
-	const lined = themeOr(theme, "muted", MUTED, num);
-
 	if (parsed.kind === "add") {
-		const mark = themeOr(theme, "toolDiffAdded", MINT, "+");
-		const body = themeOr(theme, "toolDiffAdded", MINT, parsed.content);
-		return `${dimBar} ${lined} ${dimBar}${mark}${body}`;
+		return (
+			themeOr(theme, "toolDiffAdded", MINT, `+${num} `) +
+			themeOr(theme, "toolDiffAdded", MINT, parsed.content)
+		);
 	}
 	if (parsed.kind === "del") {
-		const mark = themeOr(theme, "toolDiffRemoved", CORAL, "-");
-		const body = themeOr(theme, "toolDiffRemoved", CORAL, parsed.content);
-		return `${dimBar} ${lined} ${dimBar}${mark}${body}`;
+		return (
+			themeOr(theme, "toolDiffRemoved", CORAL, `-${num} `) +
+			themeOr(theme, "toolDiffRemoved", CORAL, parsed.content)
+		);
 	}
-	// context — space where +/- sits, keeps columns aligned
-	const body = themeOr(theme, "toolDiffContext", MUTED, parsed.content);
-	return `${dimBar} ${lined} ${dimBar} ${body}`;
+	return (
+		themeOr(theme, "toolDiffContext", MUTED, ` ${num} `) +
+		themeOr(theme, "toolDiffContext", MUTED, parsed.content)
+	);
 }
 
 /** Absolute / home / relative path-ish lines (same content as tool title rest). */
@@ -189,13 +220,10 @@ function styleGenericBodyLine(plain: string, original: string, theme?: ThemeLike
 	if (/^(Successfully|Wrote|ok|complete)\b/i.test(plain)) {
 		return `${themeOr(theme, "success", MINT, "✓")} ${themeOr(theme, "success", MINT, plain)}`;
 	}
-	// If this is a tool-name / path line, always restyle (drop foreign cyan ANSI).
+	// Always restyle from plain — full-width Box ANSI lines cause right-edge "..." when re-boxed.
 	const titled = styleToolTitle(plain.trim(), theme);
 	if (titled) return titled;
 	if (looksLikePathLine(plain)) return stylePathLine(plain, theme);
-
-	// Keep other already-styled output (diffs, etc.).
-	if (original.includes("\x1b[")) return original;
 
 	// key: value / key=value soft accent
 	const kv = plain.match(/^([A-Za-z_][\w.-]*)(\s*[:=]\s*)(.*)$/);
@@ -222,15 +250,21 @@ export function beautifyToolBody(
 
 	for (let i = 0; i < lines.length; i++) {
 		const original = lines[i] ?? "";
-		const plain = plains[i] ?? "";
-		if (!plain.trim()) {
-			// Collapse blank runs inside polish — card already has padding.
+		// Box pads every line to full terminal width; always restyle from trimmed plain
+		// so we never re-box a full-width predecessor line (that caused right-edge "...").
+		// plainTrim drops trailing pad; strip one leading Box paddingX space so parseDiffLine
+		// and titles see Pi-native text (not " -12 ..." / " title").
+		let plain = stripTrailingEllipsis(plainTrim(plains[i] ?? ""));
+		if (plain.startsWith(" ") && plain.length > 1) {
+			// Keep intentional indent (2+ spaces); only peel single box pad.
+			if (plain[1] !== " ") plain = plain.slice(1);
+		}
+		if (!plain) {
 			if (out.length > 0 && out[out.length - 1] !== "") out.push("");
 			continue;
 		}
 
-		// Any "read path" / "$ cmd" line gets title styling (not only the first).
-		const titled = styleToolTitle(plain.trim(), theme);
+		const titled = styleToolTitle(plain, theme);
 		if (titled) {
 			out.push(titled);
 			continue;
@@ -244,7 +278,8 @@ export function beautifyToolBody(
 			}
 		}
 
-		out.push(styleGenericBodyLine(plain, original, theme));
+		// Pass plain as original too — never keep full-width ANSI padding lines.
+		out.push(styleGenericBodyLine(plain, plain, theme));
 	}
 
 	// Trim trailing blank

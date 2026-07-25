@@ -118,17 +118,17 @@ export type GaugeTier = "normal" | "warning" | "error";
 const GAUGE_STOPS: Record<GaugeTier, readonly RGB[]> = {
 	// healthy: sakura → peach → lavender → sky
 	normal: SAKURA_MACARON_STOPS,
-	// warm warning: peach → butter → sakura (matches theme warning butter)
+	// warning: stay warm (peach → butter). Do NOT end on sakura or it looks "healthy".
 	warning: [
 		[252, 201, 185], // peach
+		[248, 210, 160],
 		[243, 217, 139], // butter
-		[246, 188, 154], // peach-deep
-		[242, 167, 198], // sakura
+		[230, 190, 100], // deeper butter
 	],
-	// soft error: sakura → coral → rose (matches theme error coral)
+	// error: rose → coral only (no sakura pink start that confuses with normal)
 	error: [
-		[242, 167, 198], // sakura
 		[255, 176, 196], // soft rose
+		[255, 160, 180],
 		[255, 143, 163], // coral
 		[232, 120, 150], // deeper rose
 	],
@@ -166,9 +166,18 @@ export function renderMacaronGauge(
 	const body: string[] = [];
 	for (let i = 0; i < cells; i++) {
 		if (i < filled) {
-			const base = sampleStops(stops, cells <= 1 ? 0 : i / (cells - 1), phase * 0.35);
+			let base: RGB;
+			if (tier === "warning") {
+				// solid butter — no pink end that looks "healthy" at high fill
+				base = [243, 217, 139];
+			} else if (tier === "error") {
+				base = [255, 143, 163]; // solid coral
+			} else {
+				const pos = cells <= 1 ? 0 : i / Math.max(1, filled - 1);
+				base = sampleStops(stops, pos, phase * 0.2);
+			}
 			const wave = 0.5 + 0.5 * Math.sin((i / cells + phase) * Math.PI * 2);
-			const lit = mix(base, [255, 252, 250], wave * 0.22);
+			const lit = mix(base, [255, 252, 250], wave * 0.15);
 			body.push(rgbForeground(lit, on));
 		} else {
 			// Soft track — not black-grey hole on light themes
@@ -211,16 +220,24 @@ export function renderBoxedLine(
 	if (leftWidth + rightWidth > width) {
 		return truncateToWidth(leftRail, width, "");
 	}
-	const innerWidth = width - leftWidth - rightWidth;
-	// Drop predecessor trailing ellipsis noise (… or ...) before boxing.
-	let plainish = line.replace(/(?:…|\.\.\.)\s*$/u, "");
+	const innerWidth = Math.max(0, width - leftWidth - rightWidth);
+	// Never use default truncate ellipsis ("...") — empty string only.
+	// Also drop only a pure trailing ... marker from prior truncators (not mid-line).
+	let plainish = line;
+	if (/(?:…|\.\.\.)\s*$/u.test(plainish) && visibleWidth(plainish) >= innerWidth) {
+		plainish = plainish.replace(/(?:…|\.\.\.)\s*$/u, "");
+	}
 	let content = truncateToWidth(plainish, innerWidth, "");
-	// Hard-fit: empty ellipsis can still leave SGR; ensure visible width ≤ inner.
-	while (visibleWidth(content) > innerWidth && content.length > 0) {
-		// Peel last non-ANSI char roughly by re-truncating shorter.
+	// Hard-fit: SGR / width drift can leave content 1 cell over.
+	let guard = 0;
+	while (visibleWidth(content) > innerWidth && content.length > 0 && guard++ < 8) {
 		content = truncateToWidth(content, Math.max(0, visibleWidth(content) - 1), "");
 	}
 	const pad = Math.max(0, innerWidth - visibleWidth(content));
-	// Assemble without a second truncate-to-width (avoids default "..." if ever miscounted).
-	return `${leftRail}${content}${" ".repeat(pad)}${rightRail}`;
+	const out = `${leftRail}${content}${" ".repeat(pad)}${rightRail}`;
+	// Final clamp without ellipsis if still over (should be rare).
+	if (visibleWidth(out) > width) {
+		return truncateToWidth(out, width, "");
+	}
+	return out;
 }
