@@ -196,15 +196,30 @@ export function installFooter(
 			tui.requestRender();
 		});
 
-		// Soft macaron pulse — unref so it never keeps the process alive.
-		const pulseTimer = setInterval(() => {
-			tui.requestRender();
-		}, 120) as ReturnType<typeof setInterval> & { unref?: () => void };
-		pulseTimer.unref?.();
+		// Soft macaron pulse — only when phase-tinted segments exist; slower tick.
+		// Still animates gauges/separators; avoids 8fps full footer redraws when idle
+		// with no gradient content (ascii / text-only).
+		const wantsPulse = () => {
+			const cfg = getConfig();
+			if (cfg.icons.mode === "ascii") return false;
+			// Gauge styles + gradient separators/cwd/os use phase.
+			if (cfg.contextStyle !== "text" && cfg.footerSegments.context) return true;
+			if (cfg.separator !== "none") return true;
+			if (cfg.footerSegments.cwd || cfg.footerSegments.os) return true;
+			if (cfg.footerFormat && /\$(?:context|cwd|os|sep)\b/.test(cfg.footerFormat)) return true;
+			return false;
+		};
+		let pulseTimer: ReturnType<typeof setInterval> | undefined;
+		if (wantsPulse()) {
+			pulseTimer = setInterval(() => {
+				tui.requestRender();
+			}, 250) as ReturnType<typeof setInterval> & { unref?: () => void };
+			(pulseTimer as { unref?: () => void }).unref?.();
+		}
 
 		return {
 			dispose: () => {
-				clearInterval(pulseTimer);
+				if (pulseTimer) clearInterval(pulseTimer);
 				unsubscribeBranch();
 				hooks.setRequestRender(undefined);
 				hooks.setExtensionStatusesGetter?.(undefined);

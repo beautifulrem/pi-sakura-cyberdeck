@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   type ExtensionAPI,
@@ -17,9 +17,13 @@ const POLL_INTERVAL_MS = 5 * 60 * 1000;
 const COUNTDOWN_TICK_MS = 60 * 1000;
 const REQUEST_TIMEOUT_MS = 15 * 1000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
+const CACHE_PATH = join(getAgentDir(), "cache", "dual-quota.json");
+const CACHE_MAX_AGE_MS = 30 * 60 * 1000;
 
 // Keep this aligned with the installed OAuth provider's reviewed Grok wire contract.
-const XAI_CLIENT_VERSION = installedXaiProviderVersion();
+function xaiClientVersion(): string {
+  return installedXaiProviderVersion();
+}
 
 type ProviderName = "codex" | "grok";
 type TimeoutHandle = ReturnType<typeof setTimeout> & { unref?: () => void };
@@ -44,6 +48,36 @@ type ProviderState = {
 type QuotaState = Record<ProviderName, ProviderState>;
 
 class AuthUnavailableError extends Error {}
+
+
+type QuotaCacheFile = {
+  codex?: QuotaSnapshot;
+  grok?: QuotaSnapshot;
+  savedAt: number;
+};
+
+function loadQuotaCache(): QuotaCacheFile | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(CACHE_PATH, "utf8")) as QuotaCacheFile;
+    if (!raw || typeof raw.savedAt !== "number") return undefined;
+    if (Date.now() - raw.savedAt > CACHE_MAX_AGE_MS) return undefined;
+    return raw;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveQuotaCache(state: QuotaState): void {
+  try {
+    mkdirSync(join(getAgentDir(), "cache"), { recursive: true });
+    const payload: QuotaCacheFile = { savedAt: Date.now() };
+    if (state.codex.snapshot) payload.codex = state.codex.snapshot;
+    if (state.grok.snapshot) payload.grok = state.grok.snapshot;
+    writeFileSync(CACHE_PATH, `${JSON.stringify(payload)}\n`, "utf8");
+  } catch {
+    // cache is best-effort
+  }
+}
 
 export default function dualQuota(pi: ExtensionAPI) {
   let state: QuotaState = { codex: {}, grok: {} };
@@ -130,6 +164,7 @@ export default function dualQuota(pi: ExtensionAPI) {
           codex: mergeResult(state.codex, codexResult),
           grok: mergeResult(state.grok, grokResult),
         };
+        if (state.codex.snapshot || state.grok.snapshot) saveQuotaCache(state);
         render(ctx);
       })
       .finally(() => {
@@ -149,10 +184,22 @@ export default function dualQuota(pi: ExtensionAPI) {
     if (!ctx.hasUI) return;
     currentContext = ctx;
     lastPollAt = 0;
+    // Instant paint from disk cache — network deferred so UI can open first.
+    const cached = loadQuotaCache();
+    if (cached) {
+      if (cached.codex) state.codex = { snapshot: cached.codex, stale: true };
+      if (cached.grok) state.grok = { snapshot: cached.grok, stale: true };
+    }
     render(ctx);
-    void refresh(ctx, true);
     scheduleTick();
-    schedulePulse();
+    // Defer OAuth + dual fetch + pulse off the critical session_start path.
+    const defer = setTimeout(() => {
+      if (currentContext !== ctx) return;
+      void refresh(ctx, true).then(() => {
+        if (currentContext === ctx) schedulePulse();
+      });
+    }, 0) as TimeoutHandle;
+    defer.unref?.();
   });
 
   // Deliberately do not gate or clear on model changes: both subscriptions stay visible.
@@ -173,17 +220,21 @@ export default function dualQuota(pi: ExtensionAPI) {
   });
 }
 
+let _xaiProviderVersion: string | undefined;
 function installedXaiProviderVersion(): string {
+  if (_xaiProviderVersion !== undefined) return _xaiProviderVersion;
   try {
     const packageJson = JSON.parse(
       readFileSync(join(getAgentDir(), "npm", "node_modules", "pi-xai-oauth", "package.json"), "utf8"),
     ) as { version?: unknown };
-    return typeof packageJson.version === "string" && /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(packageJson.version)
-      ? packageJson.version
-      : "1.3.6";
+    _xaiProviderVersion =
+      typeof packageJson.version === "string" && /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(packageJson.version)
+        ? packageJson.version
+        : "1.3.6";
   } catch {
-    return "1.3.6";
+    _xaiProviderVersion = "1.3.6";
   }
+  return _xaiProviderVersion;
 }
 
 function mergeResult(
@@ -239,7 +290,7 @@ async function fetchGrokQuota(
   const baseHeaders: Record<string, string> = {
     Authorization: `Bearer ${bearer}`,
     "X-XAI-Token-Auth": "xai-grok-cli",
-    "x-grok-client-version": XAI_CLIENT_VERSION,
+    "x-grok-client-version": xaiClientVersion(),
     "x-grok-client-mode": "interactive",
   };
   const identity = await requestJson(XAI_USER_URL, baseHeaders, signal);
@@ -347,7 +398,7 @@ async function requestJson(
 
 const GAUGE_CELLS = 6;
 const PULSE_PERIOD_MS = 1800;
-const PULSE_TICK_MS = 120;
+const PULSE_TICK_MS = 200;
 
 // Same sakura-macaron stops as neon-cyberdeck-header / zentui gradient.
 type RGB = readonly [number, number, number];

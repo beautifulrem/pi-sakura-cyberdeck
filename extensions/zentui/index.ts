@@ -342,9 +342,14 @@ export default function (pi: ExtensionAPI) {
 		stopRefreshInterval = startProjectRefreshInterval(currentConfig.projectRefreshIntervalMs, () =>
 			scheduleProjectRefresh(ctx),
 		);
-		scheduleProjectRefresh(ctx, { force: true });
+		// Paint footer shell first; git/package/runtime scan on next tick.
 		refresh();
-		startSessionTimer();
+		const defer = setTimeout(() => {
+			if (!sessionLifecycle.isCurrent()) return;
+			scheduleProjectRefresh(ctx, { force: true });
+			startSessionTimer();
+		}, 0);
+		(defer as { unref?: () => void }).unref?.();
 	};
 
 	const uninstallStatusLine = (ctx: ExtensionContext) => {
