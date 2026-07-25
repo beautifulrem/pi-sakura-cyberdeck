@@ -2,7 +2,7 @@
 
 Sakura Macaron visual pack for [Pi](https://pi.dev).
 
-**v1.1.3** — provider-backed token HUD with compact, readable token labels.
+**v1.1.4** — cleaner thinking HUD and clickable fixed-cluster compatibility.
 
 ## What’s inside
 
@@ -106,6 +106,11 @@ Recommended companion settings (optional, user-owned):
 Avoid stacking with `pi-zentui`, `pi-powerline-footer`, `@tifan/pi-fixed-editor`, stock `pi-claude-shimmer`, or a second copy of this pack. They share footer / working / editor surfaces.
 
 ## Changelog
+
+### 1.1.4
+
+- **Thinking HUD**: remove the brief pink per-thought timer; the muted total turn timer remains
+- **Fixed editor**: cluster mouse clicks now pass through to below-editor widgets while transcript selection stays owned by the compositor
 
 ### 1.1.3
 

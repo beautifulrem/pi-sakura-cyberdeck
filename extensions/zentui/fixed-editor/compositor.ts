@@ -447,8 +447,7 @@ export class TerminalSplitCompositor {
 		const mouseScroll = this.getConfig().mouseScroll;
 		if (mouseScroll) {
 			const mouseEv = parseMouseEvent(data);
-			if (mouseEv) {
-				this.handleMouseEvent(mouseEv);
+			if (mouseEv && this.handleMouseEvent(mouseEv)) {
 				return { consume: true };
 			}
 		}
@@ -485,17 +484,18 @@ export class TerminalSplitCompositor {
 		return { consume: true };
 	}
 
-	private handleMouseEvent(ev: { button: string; action: string; col: number; row: number }): void {
+	/** Handle transcript-owned mouse input; return false so cluster widgets can receive theirs. */
+	private handleMouseEvent(ev: { button: string; action: string; col: number; row: number }): boolean {
 		// Wheel scroll.
 		if (ev.button === "wheel-up" && ev.action === "press") {
 			this.selection.clear();
 			this.scrollBy(3);
-			return;
+			return true;
 		}
 		if (ev.button === "wheel-down" && ev.action === "press") {
 			this.selection.clear();
 			this.scrollBy(-3);
-			return;
+			return true;
 		}
 
 		// Right-click: pause mouse reporting for native context menu.
@@ -509,14 +509,22 @@ export class TerminalSplitCompositor {
 			this.selection.clear();
 			this.pauseMouseReporting();
 			this.capabilities.requestRender?.();
-			return;
+			return true;
 		}
 
 		// Only left button is used for drag-select.
-		if (ev.button !== "left") return;
+		if (ev.button !== "left") return false;
 
-		// Ignore clicks in the cluster region (below scrollable area).
-		if (ev.row > this.visibleScrollableRows) return;
+		// Rows below transcript belong to editor/widgets/footer. Let later listeners handle them,
+		// unless this compositor already owns a drag that began in transcript.
+		if (ev.row > this.visibleScrollableRows) {
+			if (!this.selection.isDragging) return false;
+			if (ev.action === "release") {
+				this.selection.clear();
+				this.capabilities.requestRender?.();
+			}
+			return true;
+		}
 
 		// Map screen row to transcript line index.
 		const lineIndex = this.visibleRootStart + ev.row - 1;
@@ -525,12 +533,12 @@ export class TerminalSplitCompositor {
 		if (ev.action === "press") {
 			this.selection.start(lineIndex, col);
 			this.capabilities.requestRender?.();
-			return;
+			return true;
 		}
 		if (ev.action === "drag" && this.selection.isDragging) {
 			this.selection.extend(lineIndex, col + 1);
 			this.capabilities.requestRender?.();
-			return;
+			return true;
 		}
 		if (ev.action === "release" && this.selection.isDragging) {
 			this.selection.extend(lineIndex, col + 1);
@@ -542,8 +550,9 @@ export class TerminalSplitCompositor {
 				void copyToClipboard(text);
 				if (this.getConfig().copyNotice) this.onCopy?.();
 			}
-			return;
+			return true;
 		}
+		return true;
 	}
 
 	/** Temporarily disable mouse reporting so the terminal's native context menu works. */

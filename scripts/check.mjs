@@ -54,4 +54,14 @@ const postPaintClears = Array.from(
 assert.deepEqual(postPaintClears, [37, 38, 39, 40]);
 assert.equal(postPaintClears.some((row) => row >= 34 && row <= 36), false);
 
+// Mouse ownership: transcript events stay here; fresh cluster clicks pass to widgets.
+assert.match(compositor, /mouseEv && this\.handleMouseEvent\(mouseEv\)/);
+assert.match(compositor, /if \(!this\.selection\.isDragging\) return false;/);
+assert.match(compositor, /if \(ev\.action === "release"\) \{\s*this\.selection\.clear\(\);/);
+
+// HUD keeps one useful clock: total turn time, not a transient duplicate thought timer.
+const shimmer = await readFile(resolve(root, "extensions/claude-shimmer/index.ts"), "utf8");
+assert.doesNotMatch(shimmer, /thinkingDuration|THOUGHT_DISPLAY_MS|thoughtTimer/);
+assert.match(shimmer, /parts\.push\(rgbAnsi\(MUTED, formatDigital\(elapsed\)\)\)/);
+
 console.log("pi-sakura-cyberdeck package check passed");

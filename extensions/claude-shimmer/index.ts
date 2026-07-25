@@ -107,8 +107,6 @@ const SHIMMER_MS_REQUESTING = 45;   // slightly snappier send
 const SHIMMER_MS_WORKING = 120;     // smoother receive sweep
 const TOKEN_COUNTER_MS = 40;
 const SHIMMER_BAND = 5;             // wider soft bloom
-const SHOW_TIMER_AFTER_MS = 20_000; // show clock earlier (OpenCode-ish)
-const THOUGHT_DISPLAY_MS = 4_000;
 const STALL_TIMEOUT_MS = 3_000;
 const STALL_ERROR_RED: [number, number, number] = CORAL;
 const STALL_TRANSITION_FRAMES = 28;
@@ -310,8 +308,6 @@ export default function (pi: ExtensionAPI) {
   let agentStart = 0;
   let turnStart = 0;
   let thinkingStart = 0;
-  let thinkingDuration: number | null = null;
-  let thoughtSetAt = 0;
   let completedOutputTokens = 0;
   let currentEstimatedTokens = 0;
   let currentReportedTokens: number | null = null;
@@ -331,7 +327,6 @@ export default function (pi: ExtensionAPI) {
   let shimmerTimer: ReturnType<typeof setInterval> | null = null;
   let tokenTimer: ReturnType<typeof setInterval> | null = null;
   let shimmerFrame = 0;
-  let thoughtTimer: ReturnType<typeof setTimeout> | null = null;
 
   // State
   let ctx_: ExtensionContext | null = null;
@@ -378,13 +373,13 @@ export default function (pi: ExtensionAPI) {
   /** Effort label — stable for the whole turn; never swapped for SEND/RECV/TOOL. */
   function effortTagStyled(): string | undefined {
     const info = getEffortInfo();
-    // Only show when we have a real level, or while/after thinking with unknown level.
-    const tag = info?.tag ?? (mode === "thinking" || thinkingDuration !== null ? "THINK" : "");
+    // Only show when we have a real level, or while thinking with unknown level.
+    const tag = info?.tag ?? (mode === "thinking" ? "THINK" : "");
     if (!tag) return undefined;
     const base = info?.color ?? LAVENDER;
 
     // Soft glow while actively thinking (base tier color → petal white).
-    if (mode === "thinking" && thinkingDuration === null) {
+    if (mode === "thinking") {
       const thinkElapsed = Date.now() - thinkingStart;
       if (thinkElapsed > THINKING_GLOW_DELAY_MS) {
         const sec = (thinkElapsed - THINKING_GLOW_DELAY_MS) / 1000;
@@ -414,19 +409,14 @@ export default function (pi: ExtensionAPI) {
     const effortPart = effortTagStyled();
     if (effortPart) parts.push(effortPart);
 
-    // 2) Thought duration — same digital family as wall clock (00:03), petal tint
-    if (thinkingDuration !== null) {
-      parts.push(rgbAnsi(PETAL, formatDigital(thinkingDuration)));
-    }
-
-    // 3) Tokens — provider output usage; ~ means live fallback estimate.
+    // 2) Tokens — provider output usage; ~ means live fallback estimate.
     if (showTokens) {
       const arrow = mode === "requesting" ? ARROW_REQUESTING : ARROW_WORKING;
       const count = styleTokenCount(tokens, estimated);
       parts.push(`${rgbAnsi(SKY, arrow)} ${count}`);
     }
 
-    // 4) Wall clock — muted, fixed mm:ss
+    // 3) Wall clock — muted, fixed mm:ss
     if (showTimer) {
       parts.push(rgbAnsi(MUTED, formatDigital(elapsed)));
     }
@@ -585,34 +575,6 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  function onThinkingEnd() {
-    if (thinkingDuration !== null) return;
-    const dur = Date.now() - thinkingStart;
-    thinkingDuration = dur;
-    thoughtSetAt = Date.now();
-    scheduleThoughtClear();
-  }
-
-  function scheduleThoughtClear() {
-    if (thoughtTimer) clearTimeout(thoughtTimer);
-    if (thinkingDuration === null) return;
-    const remaining = THOUGHT_DISPLAY_MS - (Date.now() - thoughtSetAt);
-    if (remaining <= 0) {
-      thinkingDuration = null;
-      updateDisplay();
-      return;
-    }
-    thoughtTimer = setTimeout(() => {
-      thoughtTimer = null;
-      if (Date.now() - thoughtSetAt < THOUGHT_DISPLAY_MS) {
-        scheduleThoughtClear();
-        return;
-      }
-      thinkingDuration = null;
-      updateDisplay();
-    }, remaining);
-  }
-
   function setEstimatedBlock(index: number, units: number) {
     const next = Math.max(0, units);
     const previous = currentBlockTokenUnits.get(index) ?? 0;
@@ -627,13 +589,8 @@ export default function (pi: ExtensionAPI) {
 
   function resetTurn(resetOutput = false) {
     stopShimmer();
-    if (thoughtTimer) {
-      clearTimeout(thoughtTimer);
-      thoughtTimer = null;
-    }
     ctx_?.ui?.setWorkingMessage();
     mode = "requesting";
-    thinkingDuration = null;
     currentBlockTokenUnits.clear();
     currentEstimatedTokenUnits = 0;
     currentEstimatedTokens = 0;
@@ -732,11 +689,6 @@ export default function (pi: ExtensionAPI) {
       case "thinking_start":
         setMode("thinking");
         thinkingStart = Date.now();
-        thinkingDuration = null;
-        if (thoughtTimer) {
-          clearTimeout(thoughtTimer);
-          thoughtTimer = null;
-        }
         break;
 
       case "thinking_delta":
@@ -745,7 +697,6 @@ export default function (pi: ExtensionAPI) {
         break;
 
       case "thinking_end":
-        onThinkingEnd();
         break;
 
       case "text_start":
@@ -808,10 +759,6 @@ export default function (pi: ExtensionAPI) {
     turnActive = false;
     stopShimmer();
 
-    if (thinkingDuration !== null && Date.now() - thoughtSetAt >= THOUGHT_DISPLAY_MS) {
-      thinkingDuration = null;
-    }
-
     activeToolCount = 0;
   });
 
@@ -835,10 +782,6 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     turnActive = false;
     stopShimmer();
-    if (thoughtTimer) {
-      clearTimeout(thoughtTimer);
-      thoughtTimer = null;
-    }
     ctx_ = null;
   });
 }
