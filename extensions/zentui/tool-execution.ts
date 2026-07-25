@@ -80,14 +80,16 @@ function statusLabel(runtime: ToolExecutionRuntime, statsText: string): string {
 		: `✓ ${name}${deltaPart} · COMPLETE`;
 }
 
-// Status rail in sakura-macaron pastels (same semantics as Grok Build, softer hue).
-const RAIL_WORKING: [number, number, number] = [159, 211, 242]; // sky — in flight
-const RAIL_SUCCESS: [number, number, number] = [186, 220, 214]; // seafoam mint (mint+sky, not hard green)
-const RAIL_ERROR: [number, number, number] = [255, 176, 196]; // soft rose (sakura+coral, not hard red)
+// Status rail = theme semantic tokens from sakura-macaron.json (pastel, not traffic lights).
+// Design systems (MUI/Paste/Chakra) keep success/error/info roles; pastel decks soft-tint them.
+// This pack: success→mint, error→coral, info→sky (already in theme).
+const RAIL_WORKING: [number, number, number] = [159, 211, 242]; // sky  #9FD3F2 — in flight
+const RAIL_SUCCESS: [number, number, number] = [174, 229, 197]; // mint  #AEE5C5 — theme success
+const RAIL_ERROR: [number, number, number] = [255, 143, 163];   // coral #FF8FA3 — theme error (rose, not pure red)
 
 function leftRailFor(runtime: ToolExecutionRuntime, _theme: Theme): string {
 	const pending = runtime.isPartial !== false;
-	// Thick left bar: sky / seafoam / rose — status cue without breaking macaron palette.
+	// Thick left bar: sky / mint / coral — Grok-style status, macaron hues.
 	if (pending) return rgbForeground(RAIL_WORKING, "┃ ");
 	if (runtime.result?.isError) return rgbForeground(RAIL_ERROR, "┃ ");
 	return rgbForeground(RAIL_SUCCESS, "┃ ");
