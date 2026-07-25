@@ -1,6 +1,6 @@
 {
   "name": "pi-sakura-cyberdeck",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Sakura Macaron visual pack for Pi: theme, cyberdeck header, matrix rain, macaron Zentui chrome, dual-quota chips, Claude-style shimmer.",
   "type": "module",
   "license": "MIT",

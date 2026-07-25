@@ -2,7 +2,7 @@
 
 Sakura Macaron visual pack for [Pi](https://pi.dev).
 
-**v1.1.0** — polished chrome release: macaron footer/context, Thought trail, tool cards, dual-quota chips, Claude-style shimmer.
+**v1.1.1** — tool-card ellipsis fix, tiered context gauge, macaron rails; builds on 1.1 chrome pack.
 
 ## What’s inside
 
@@ -52,8 +52,9 @@ Whisking...  ( HIGH · ↓ 128 · 00:12 )
 ```
 
 - Thought trail: tight spacing (no double blank stack)
-- Tool frames: symmetric sakura frame gradient (ends match)
+- Tool frames: symmetric sakura frame gradient (ends match); no per-line trailing `...`
 - Tool titles: no leading ◎ glyph; snake_case tools colored; paths sakura
+- Left rail: sky (running) / mint (ok) / coral (error)
 
 ## Requirements
 
@@ -104,6 +105,15 @@ Recommended companion settings (optional, user-owned):
 Avoid stacking with `pi-zentui`, `pi-powerline-footer`, `@tifan/pi-fixed-editor`, stock `pi-claude-shimmer`, or a second copy of this pack. They share footer / working / editor surfaces.
 
 ## Changelog
+
+### 1.1.1
+
+- **Tool cards**: stop right-edge `...` on every body line (Box pad broke diff parse; re-box from plain only; `truncateToWidth` ellipsis forced empty)
+- **Diff body**: Pi-native `±12 text` — no extra `│` gutters eating width
+- **Context gauge**: solid butter (warning) / coral (error) at high %; no healthy pink at 85–90%
+- **Tool left rail**: sky / mint / coral status cues (macaron, not traffic-light RGB)
+- **Self-shell tools** (edit): also polished + framed
+- **Startup**: deferred dual-quota / project refresh / web-access / chrome bridge / subagents (from 1.1.0 follow-ups)
 
 ### 1.1.0
 
