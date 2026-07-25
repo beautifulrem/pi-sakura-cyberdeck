@@ -19,9 +19,38 @@ import {
 	formatUsernameHostLabel,
 } from "./format";
 import { resolveRuntimeSymbol } from "./icons";
+import {
+	pulsePhase,
+	renderSakuraGradient,
+} from "./gradient";
 import type { LiveContextOverride } from "./live-context";
 import type { FooterState } from "./state";
 import { renderStyleForSource } from "./style";
+
+function styleContextSegment(
+	theme: Parameters<typeof renderStyleForSource>[0],
+	colorSource: Parameters<typeof renderStyleForSource>[1],
+	contextColor: Parameters<typeof renderStyleForSource>[2],
+	label: string,
+	asciiGauge: boolean,
+	style: string,
+): string {
+	if (!label || label === "--") {
+		return renderStyleForSource(theme, colorSource, contextColor, label || "--");
+	}
+	// Truecolor gauge already carries macaron colors; only tint the trailing text / brackets.
+	if (!asciiGauge && (style === "gauge" || style === "text+gauge")) {
+		const split = label.match(/^(\[[\s\S]*?\])(\s*)(.*)$/);
+		if (split) {
+			const [, gaugePart, gap, rest] = split;
+			const tintedRest = rest
+				? renderStyleForSource(theme, colorSource, contextColor, rest)
+				: "";
+			return `${gaugePart}${gap}${tintedRest}`;
+		}
+	}
+	return renderStyleForSource(theme, colorSource, contextColor, label);
+}
 
 const separatorText: Record<SeparatorStyle, string> = {
 	pipe: " | ",
@@ -167,8 +196,15 @@ export function installFooter(
 			tui.requestRender();
 		});
 
+		// Soft macaron pulse — unref so it never keeps the process alive.
+		const pulseTimer = setInterval(() => {
+			tui.requestRender();
+		}, 120) as ReturnType<typeof setInterval> & { unref?: () => void };
+		pulseTimer.unref?.();
+
 		return {
 			dispose: () => {
+				clearInterval(pulseTimer);
 				unsubscribeBranch();
 				hooks.setRequestRender(undefined);
 				hooks.setExtensionStatusesGetter?.(undefined);
@@ -179,22 +215,21 @@ export function installFooter(
 				const config = getConfig();
 				const colorSource = config.colorSources.starship;
 				const iconMode = config.icons.mode;
-				const separator = renderStyleForSource(
-					theme,
-					colorSource,
-					config.colors.separator,
-					separatorText[config.separator],
-				);
+				const phase = pulsePhase();
+				const separatorRaw = separatorText[config.separator];
+				const separator =
+					config.separator === "none"
+						? separatorRaw
+						: renderSakuraGradient(separatorRaw, phase * 0.5);
 				const innerWidth = Math.max(1, width - 2);
-				const cwdLabel = renderStyleForSource(
-					theme,
-					colorSource,
-					config.colors.cwd,
-					formatCwdLabel(ctx.cwd, config.icons.cwd, {
-						mode: config.pathDisplay.mode,
-						depth: config.pathDisplay.depth,
-					}),
-				);
+				const cwdPlain = formatCwdLabel(ctx.cwd, config.icons.cwd, {
+					mode: config.pathDisplay.mode,
+					depth: config.pathDisplay.depth,
+				});
+				const cwdLabel =
+					iconMode === "ascii"
+						? renderStyleForSource(theme, colorSource, config.colors.cwd, cwdPlain)
+						: renderSakuraGradient(cwdPlain, phase * 0.25);
 				const branch = state.branch;
 				const branchText = branch
 					? formatGitBranchText(branch, config.gitBranch.maxLength)
@@ -212,6 +247,7 @@ export function installFooter(
 					contextWindow,
 					style: config.contextStyle,
 					asciiGauge: iconMode === "ascii",
+					phase,
 				});
 				const tier = contextColorTier(contextPercent, config.contextThresholds);
 				const contextColor =
@@ -300,12 +336,17 @@ export function installFooter(
 								formatUsernameHostLabel(config.icons.username),
 							);
 						case "os":
-							return renderStyleForSource(
-								theme,
-								colorSource,
-								config.colors.os,
-								formatOsLabel(config.icons.os, iconMode),
-							);
+							return iconMode === "ascii"
+								? renderStyleForSource(
+										theme,
+										colorSource,
+										config.colors.os,
+										formatOsLabel(config.icons.os, iconMode),
+									)
+								: renderSakuraGradient(
+										formatOsLabel(config.icons.os, iconMode),
+										(phase + 0.4) % 1,
+									);
 						case "time":
 							return renderStyleForSource(
 								theme,
@@ -314,7 +355,14 @@ export function installFooter(
 								formatTimeLabel(config.icons.time),
 							);
 						case "context":
-							return renderStyleForSource(theme, colorSource, contextColor, contextLabel);
+							return styleContextSegment(
+								theme,
+								colorSource,
+								contextColor,
+								contextLabel,
+								iconMode === "ascii",
+								config.contextStyle,
+							);
 						case "tokens":
 							return renderStyleForSource(
 								theme,
@@ -479,13 +527,11 @@ export function installFooter(
 							formatUsernameHostLabel(config.icons.username),
 						)
 					: "";
+				const osPlain = formatOsLabel(config.icons.os, iconMode);
 				const osSegment = config.footerSegments.os
-					? renderStyleForSource(
-							theme,
-							colorSource,
-							config.colors.os,
-							formatOsLabel(config.icons.os, iconMode),
-						)
+					? iconMode === "ascii"
+						? renderStyleForSource(theme, colorSource, config.colors.os, osPlain)
+						: renderSakuraGradient(osPlain, (phase + 0.4) % 1)
 					: "";
 				const left = [
 					osSegment,
@@ -511,7 +557,14 @@ export function installFooter(
 					: "";
 				const right = [
 					config.footerSegments.context
-						? renderStyleForSource(theme, colorSource, contextColor, contextLabel)
+						? styleContextSegment(
+								theme,
+								colorSource,
+								contextColor,
+								contextLabel,
+								iconMode === "ascii",
+								config.contextStyle,
+							)
 						: "",
 					config.footerSegments.tokens
 						? renderStyleForSource(theme, colorSource, config.colors.tokens, state.tokenLabel)
@@ -559,8 +612,8 @@ export function installFooter(
 					separator,
 					innerWidth,
 				);
-				const framed = width > 2 ? ` ${truncateToWidth(content, width - 2, "")} ` : content;
-				return [truncateToWidth(framed, width, "")];
+				const body = width > 2 ? ` ${truncateToWidth(content, width - 2, "")} ` : content;
+				return [truncateToWidth(body, width, "")];
 			},
 		};
 	});

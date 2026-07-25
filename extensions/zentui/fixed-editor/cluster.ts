@@ -81,9 +81,22 @@ export function renderCluster(
 
 	let allLines = [...status, ...above, ...editorLines, ...below, ...footer];
 
-	// Strip leading blank lines (e.g. empty status line above the editor border).
+	// Strip leading blanks, but keep ONE when status has real content (Loader top pad
+	// under chat history / tool cards). Without this, working spinner glues to history.
+	const statusHasContent = status.some((line) => visibleWidth(line) > 0);
 	let start = 0;
-	while (start < allLines.length - 1 && visibleWidth(allLines[start]) === 0) start++;
+	if (statusHasContent) {
+		// Allow a single leading blank; collapse runs of 2+.
+		while (
+			start + 1 < allLines.length &&
+			visibleWidth(allLines[start]) === 0 &&
+			visibleWidth(allLines[start + 1] ?? "") === 0
+		) {
+			start++;
+		}
+	} else {
+		while (start < allLines.length - 1 && visibleWidth(allLines[start]) === 0) start++;
+	}
 	allLines = allLines.slice(start);
 
 	let cursor: { row: number; col: number } | null = null;

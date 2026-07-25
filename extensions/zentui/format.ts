@@ -10,6 +10,7 @@ import type {
 	GitBranchMaxLength,
 	PathDisplayMode,
 } from "./config";
+import { renderMacaronGauge } from "./gradient";
 import type { GitCommitInfo, GitMetricsInfo } from "./git";
 import type { IconMode } from "./icons";
 import { resolveOsIcon, resolvePackageIcon, resolveRuntimeSymbol } from "./icons";
@@ -241,12 +242,19 @@ export function contextColorTier(
 	return "normal";
 }
 
-export function buildContextGauge(percent: number, width = 10, ascii = false): string {
-	const clamped = Math.max(0, Math.min(100, percent));
-	const filled = Math.round((clamped / 100) * width);
-	const on = ascii ? "#" : "█";
-	const off = ascii ? "-" : "░";
-	return `${on.repeat(filled)}${off.repeat(Math.max(0, width - filled))}`;
+export function buildContextGauge(
+	percent: number,
+	width = 10,
+	ascii = false,
+	phase = 0,
+): string {
+	if (ascii) {
+		const clamped = Math.max(0, Math.min(100, percent));
+		const filled = Math.round((clamped / 100) * width);
+		return `${"#".repeat(filled)}${"-".repeat(Math.max(0, width - filled))}`;
+	}
+	// Strip frame — caller wraps with [] for text+gauge / gauge styles.
+	return renderMacaronGauge(percent, width, { phase, frame: false });
 }
 
 export function formatContextPercentLabel(
@@ -266,8 +274,10 @@ export function buildContextDisplayLabel(options: {
 	contextWindow: number | undefined;
 	style?: ContextStyle;
 	asciiGauge?: boolean;
+	/** 0..1 pulse phase for macaron shimmer. */
+	phase?: number;
 }): string {
-	const { percent, contextWindow, style = "text", asciiGauge = false } = options;
+	const { percent, contextWindow, style = "text", asciiGauge = false, phase = 0 } = options;
 	if (!contextWindow || contextWindow <= 0) return "--";
 
 	const text = formatContextPercentLabel(percent, contextWindow);
@@ -275,7 +285,7 @@ export function buildContextDisplayLabel(options: {
 		percent === null || percent === undefined || !Number.isFinite(percent)
 			? 0
 			: Math.max(0, Math.min(100, percent));
-	const gauge = buildContextGauge(numericPercent, 10, asciiGauge);
+	const gauge = buildContextGauge(numericPercent, 10, asciiGauge, phase);
 
 	if (style === "gauge") return `[${gauge}]`;
 	if (style === "text+gauge") return `[${gauge}] ${text}`;

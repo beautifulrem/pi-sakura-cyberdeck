@@ -1,93 +1,123 @@
 # pi-sakura-cyberdeck
 
-Sakura Macaron visual pack for [Pi](https://pi.dev):
+Sakura Macaron visual pack for [Pi](https://pi.dev).
 
-- `sakura-macaron` truecolor theme
-- Sakura → sky cyberdeck startup header
-- animated pastel Matrix rain while Pi works
-- modified Zentui editor, prompt chrome, and Starship-style footer
-- fixed bottom editor enabled by default
+**v1.1.0** — polished chrome release: macaron footer/context, Thought trail, tool cards, dual-quota chips, Claude-style shimmer.
+
+## What’s inside
+
+| Piece | Role |
+|-------|------|
+| **Theme** `sakura-macaron` | Truecolor palette (sakura / peach / petal / lavender / sky / mint / coral) |
+| **Header** | Sakura→sky cyberdeck startup art |
+| **Matrix** | Pastel digital rain while working (optional; can conflict with shimmer) |
+| **Zentui** | Editor, prompt rails, Starship footer, fixed bottom editor |
+| **Dual-quota** | Codex + Grok remaining chips in the footer |
+| **Claude shimmer** | Working spinner with macaron sweep + effort HUD |
+
+## Look (v1.1)
+
+**Footer**
+
+```text
+󰀵  project  on 󰘬 main   Codex ▕░·····▏  0% · in 1d · Grok ▕██····▏ 36% · in 5d   [███░░░░░░░] 4%/2m  $0.06
+```
+
+- Context bar: truecolor macaron gauge; label **sky** (not mint green)
+- Cost: **peach**
+- Separators / cwd / os: soft sakura gradient accents
+- Dual-quota: identity tints + `· in Nd` reset text
+
+**Working line**
+
+```text
+Whisking...  ( HIGH · ↓ 128 · 00:12 )
+```
+
+- Fixed-width dots, slow cycle
+- Effort: MINIMAL→MAX, tier-colored, stable for the turn
+- Tokens: sky `↑/↓` + number (no padding holes)
+- Outer `( … )` with inner ` · ` (upstream pi-claude-shimmer layout)
+
+**History**
+
+```text
+  ✦ Thought trail
+  ├─ ◇ …
+  ╰─ ◇ …
+
+╭─ ✓ READ · COMPLETE ─╮
+┃ read  /path/to/file │
+╰─────────────────────╯
+```
+
+- Thought trail: tight spacing (no double blank stack)
+- Tool frames: symmetric sakura frame gradient (ends match)
+- Tool titles: no leading ◎ glyph; snake_case tools colored; paths sakura
 
 ## Requirements
 
 - Pi `>= 0.80`
-- truecolor terminal
+- Truecolor terminal
 - Nerd Font for configured icons
 
 ## Install
 
-From GitHub:
-
 ```bash
-pi install git:github.com/YOUR_NAME/pi-sakura-cyberdeck
+pi install git:github.com/beautifulrem/pi-sakura-cyberdeck
 ```
 
-From npm after publication:
+Local:
 
 ```bash
-pi install npm:pi-sakura-cyberdeck
+pi install /path/to/pi-sakura-cyberdeck
 ```
 
-Local test:
+Then `/settings` → **sakura-macaron**. Restart Pi once.
 
-```bash
-pi install ./pi-sakura-cyberdeck
+> Prefer **this package’s shimmer** over stock `npm:pi-claude-shimmer`, and turn off `sakura-matrix` if both fight for the working indicator.
+
+Recommended companion settings (optional, user-owned):
+
+```jsonc
+// ~/.pi/agent/zentui.json (excerpt)
+{
+  "colors": {
+    "contextNormal": "syntaxFunction",
+    "cost": "mdCode",
+    "editorBorder": "sakura-macaron-gradient"
+  }
+}
 ```
-
-Then open `/settings` and select **sakura-macaron**. Restart Pi once so fixed-editor chrome owns the full session.
-
-> Pi packages execute with your user permissions. Review extension source before installing third-party packages.
 
 ## Commands
 
 ```text
-/zentui                         interactive editor/footer settings
-/sakura-matrix                 animation status
+/zentui                         editor/footer settings
+/sakura-matrix                 rain status
 /sakura-matrix on|off
-/sakura-matrix preview
-/sakura-matrix fps <8-18>
-/sakura-matrix density <0.45-0.95>
+/dual-usage                    refresh Codex+Grok quotas
 ```
 
-User overrides are stored separately from other Zentui installs:
+## Conflicts
 
-```text
-~/.pi/agent/sakura-cyberdeck-zentui.json
-~/.pi/agent/sakura-cyberdeck-matrix.json
-```
+Avoid stacking with `pi-zentui`, `pi-powerline-footer`, `@tifan/pi-fixed-editor`, stock `pi-claude-shimmer`, or a second copy of this pack. They share footer / working / editor surfaces.
 
-Delete either file to restore this package's defaults.
+## Changelog
 
-## Fixed-editor warning
+### 1.1.0
 
-Fixed editor uses alternate-screen and terminal mouse reporting. While mouse scrolling is enabled, native terminal selection, URL clicking, and normal scrollback may be unavailable.
+- Macaron truecolor footer: gradient separators, pulsed context gauge, sky context text + peach cost
+- Fixed-editor: keep one blank above working spinner so it does not glue to history
+- Thought trail: sakura chrome, tight vertical spacing
+- Tool cards: symmetric frame gradient, path/title color consistency, no icon prefix on `read`
+- Bundled dual-quota chips (`· in Nd`) and sakura Claude shimmer (effort HUD + verb list)
+- Defaults: context/cost colors no longer mint-on-gradient clash
 
-Disable it with:
+### 1.0.0
 
-```text
-/zentui fixed-editor disable
-```
-
-Avoid running this package together with `pi-zentui`, `pi-powerline-footer`, `@tifan/pi-fixed-editor`, `pi-sticky-input`, or duplicate copies of its header/matrix extensions. They compete for the same TUI surfaces.
-
-## Customize branding
-
-Edit `extensions/header/index.ts` and replace `SAKURA CYBERDECK`. Palette lives in `themes/sakura-macaron.json`; Zentui defaults live in `extensions/zentui/config.ts`.
-
-## Publish
-
-```bash
-npm run check
-npm run pack:check
-npm publish --access public
-```
-
-For Pi package gallery artwork, add a hosted PNG/WebP URL as `pi.image` in `package.json`.
-
-## Credits
-
-Zentui portion derives from [lmilojevicc/pi-zentui](https://github.com/lmilojevicc/pi-zentui), MIT licensed. See [NOTICE](NOTICE) and [licenses/pi-zentui-MIT.txt](licenses/pi-zentui-MIT.txt).
+- Initial theme, header, matrix, zentui pack
 
 ## License
 
-MIT
+MIT. Bundled dual-quota is original to this pack. Claude shimmer is a sakura-themed fork of [pi-claude-shimmer](https://github.com/ouzhenkun/pi-claude-shimmer) (MIT).

@@ -7,11 +7,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { PolishedTuiConfig } from "./config";
 import { installPrototypePatch } from "./prototype-patch-registry";
-import {
-	EDITOR_ACCENT_FALLBACK,
-	renderStyleForSourceOrFallback,
-} from "./style";
-import { renderEditorFrameBorder } from "./ui";
+import { renderSakuraFrameGradient, renderSakuraSolid } from "./gradient";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -115,18 +111,8 @@ function fillLine(content: string, width: number): string {
 function renderPromptBoxRail(theme: Theme | undefined, config: PolishedTuiConfig): string {
 	if (config.features.copyFriendly) return "";
 	const railGlyph = config.icons.rail;
-
-	return `${
-		theme
-			? renderStyleForSourceOrFallback(
-					theme,
-					config.colorSources.userMessages,
-					config.colors.editorAccent,
-					EDITOR_ACCENT_FALLBACK,
-					railGlyph,
-				)
-			: railGlyph
-	} `;
+	// Solid sakura rail — matches frame ends (not linear sky on the right).
+	return `${renderSakuraSolid(railGlyph)} `;
 }
 
 function renderPromptBoxLine(
@@ -175,14 +161,7 @@ function renderZentuiUserMessage(
 	});
 	const body = renderer.render(contentWidth);
 	const contentLines = body.length > 0 ? body : [""];
-	const border = theme
-		? renderEditorFrameBorder(
-				"─".repeat(width),
-				config,
-				theme,
-				config.colorSources.userMessages,
-			)
-		: "─".repeat(width);
+	const border = renderSakuraFrameGradient("─".repeat(width));
 	const lines = [
 		truncateToWidth(border, width, ""),
 		renderPromptBoxLine("", width, theme, config),

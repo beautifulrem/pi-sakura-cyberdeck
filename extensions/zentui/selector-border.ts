@@ -5,7 +5,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { PolishedTuiConfig } from "./config";
 import { installPrototypePatch } from "./prototype-patch-registry";
-import { EDITOR_BORDER_STYLE, renderChromeBorder, renderEditorBorder } from "./style";
+import { renderSakuraFrameGradient } from "./gradient";
 
 type PatchableSelectorPrototype = {
 	render: (width: number) => string[];
@@ -23,14 +23,11 @@ function isHorizontalBorderLine(line: string): boolean {
 
 function renderBorderLine(
 	width: number,
-	theme: Theme | undefined,
-	config: PolishedTuiConfig | undefined,
+	_theme: Theme | undefined,
+	_config: PolishedTuiConfig | undefined,
 ): string {
 	const text = "─".repeat(Math.max(1, width));
-	if (theme && config) {
-		return renderChromeBorder(theme, config.colorSources.editor, EDITOR_BORDER_STYLE, text);
-	}
-	return renderEditorBorder(text);
+	return renderSakuraFrameGradient(text);
 }
 
 export function patchSelectorBorderStyle(

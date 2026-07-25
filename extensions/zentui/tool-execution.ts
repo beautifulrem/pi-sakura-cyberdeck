@@ -1,10 +1,31 @@
-import { type Theme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
-import { renderBoxedLine, renderSakuraGradient } from "./gradient";
+import {
+	BashExecutionComponent,
+	type Theme,
+	ToolExecutionComponent,
+} from "@earendil-works/pi-coding-agent";
+import {
+	beautifyToolBody,
+	compactToolBody,
+	bottomBorder,
+	fitBorderLabel,
+	formatStats,
+	fg,
+	stripAnsi,
+} from "./tool-body-polish";
+import {
+	renderBoxedLine,
+	renderSakuraFrameGradient,
+	renderSakuraGradient,
+	renderSakuraSolid,
+	rgbForeground,
+} from "./gradient";
 import { installPrototypePatch } from "./prototype-patch-registry";
 
 const SETTLED_CACHE_MAX_LINES = 80;
 const SETTLED_CACHE_MAX_CHARS = 64 * 1024;
+
+// Soft mint for bash rails (truecolor, theme-independent).
+const MINT = [174, 229, 197] as const;
 
 type Cleanup = () => void;
 type ToolExecutionRuntime = {
@@ -29,43 +50,11 @@ type SettledRender = {
 };
 
 function isBlank(line: string): boolean {
-	return line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").trim().length === 0;
+	return stripAnsi(line).trim().length === 0;
 }
 
 function containsTerminalImage(lines: readonly string[]): boolean {
 	return lines.some((line) => line.includes("\x1b_G") || line.includes("\x1b]1337;File="));
-}
-
-function truncatePlainText(text: string, maxWidth: number): string {
-	let result = "";
-	let width = 0;
-	for (const char of text) {
-		const charWidth = visibleWidth(char);
-		if (width + charWidth > maxWidth) break;
-		result += char;
-		width += charWidth;
-	}
-	return result;
-}
-
-function fitBorderLabel(label: string, width: number): string {
-	if (width <= 0) return "";
-	if (width === 1) return "╭";
-	const innerWidth = Math.max(0, width - 2);
-	const lead = truncatePlainText(`─ ${label} `, innerWidth);
-	return `╭${lead}${"─".repeat(Math.max(0, innerWidth - visibleWidth(lead)))}╮`;
-}
-
-function bottomBorder(width: number): string {
-	if (width <= 0) return "";
-	if (width === 1) return "╰";
-	return `╰${"─".repeat(Math.max(0, width - 2))}╯`;
-}
-
-function statusLabel(runtime: ToolExecutionRuntime): string {
-	const name = (runtime.toolName || "tool").replaceAll("_", " ").toUpperCase();
-	if (runtime.isPartial !== false) return `◆ ${name} · RUNNING`;
-	return runtime.result?.isError ? `× ${name} · FAILED` : `✓ ${name} · COMPLETE`;
 }
 
 function containsResultImage(runtime: ToolExecutionRuntime): boolean {
@@ -82,10 +71,28 @@ function isCacheableSettledRender(lines: readonly string[]): boolean {
 	return true;
 }
 
+function statusLabel(runtime: ToolExecutionRuntime, statsText: string): string {
+	const name = (runtime.toolName || "tool").replaceAll("_", " ").toUpperCase();
+	const deltaPart = statsText ? ` · ${statsText}` : "";
+	if (runtime.isPartial !== false) return `◆ ${name}${deltaPart} · RUNNING`;
+	return runtime.result?.isError
+		? `× ${name}${deltaPart} · FAILED`
+		: `✓ ${name}${deltaPart} · COMPLETE`;
+}
+
+function leftRailFor(runtime: ToolExecutionRuntime, _theme: Theme): string {
+	const pending = runtime.isPartial !== false;
+	if (pending) return renderSakuraSolid("┃ "); // sakura — matches frame corners
+	if (runtime.result?.isError) {
+		return rgbForeground([255, 143, 163], "┃ ");
+	}
+	// settled success — still sakura so L/R rails match the frame ends
+	return renderSakuraSolid("┃ ");
+}
+
 /**
- * Give built-in/default-shell tool rows a compact status rail. Settled rows are
- * cached because animation renders otherwise rebuild every historical tool box;
- * success/error stays on the rail instead of a full green/red background.
+ * Compact sakura status rail + modern body polish for tool rows.
+ * Settled frames are cached so animation redraws stay cheap.
  */
 export function installToolExecutionStyle(getTheme: () => Theme | undefined): Cleanup {
 	const settledRenders = new WeakMap<object, SettledRender>();
@@ -140,23 +147,22 @@ export function installToolExecutionStyle(getTheme: () => Theme | undefined): Cl
 				const blank = body.shift();
 				if (blank !== undefined) prefix.push(blank);
 			}
-			const label = fitBorderLabel(statusLabel(runtime), width);
-			const top = renderSakuraGradient(label);
-			// Keep only the status rail slightly heavier. State is expressed in the
-			// native macaron palette rather than traffic-light red/green: lavender
-			// while running, sky blue when complete, and Sakura pink when failed.
-			const leftRail = pending
-				? theme.fg("thinkingXhigh", "┃ ")
-				: runtime.result?.isError
-					? theme.fg("accent", "┃ ")
-					: theme.fg("syntaxFunction", "┃ ");
-			const rightRail = renderSakuraGradient(" │");
-			const bottom = renderSakuraGradient(bottomBorder(width));
 
+			const polished = beautifyToolBody(body, theme);
+			const bodyLines = compactToolBody(polished.lines, {
+				expanded: Boolean(runtime.expanded),
+				theme,
+			});
+			const statsText = formatStats(polished.stats);
+			const label = fitBorderLabel(statusLabel(runtime, statsText), width);
+			const top = renderSakuraFrameGradient(label);
+			const leftRail = leftRailFor(runtime, theme);
+			const rightRail = renderSakuraSolid(" │"); // same sakura as left corner
+			const bottom = renderSakuraFrameGradient(bottomBorder(width));
 			const boxed = [
 				...prefix,
 				top,
-				...body.map((line) => renderBoxedLine(line, width, leftRail, rightRail)),
+				...bodyLines.map((line) => renderBoxedLine(line, width, leftRail, rightRail)),
 				bottom,
 			];
 			if (!pending && !containsResultImage(runtime) && isCacheableSettledRender(boxed)) {
@@ -182,7 +188,71 @@ export function installToolExecutionStyle(getTheme: () => Theme | undefined): Cl
 		},
 	);
 
+	// Bash uses its own component — gradient the chrome, keep streaming body.
+	const cleanupBashRender = installPrototypePatch(
+		BashExecutionComponent.prototype,
+		"render",
+		"bash-execution-render",
+		({ predecessor, receiver, args }) => {
+			const width = args[0];
+			const rendered = Reflect.apply(predecessor, receiver, args);
+			if (!Array.isArray(rendered) || !rendered.every((line) => typeof line === "string")) {
+				return rendered;
+			}
+			const lines = rendered as string[];
+			if (typeof width !== "number" || width <= 2 || lines.length === 0) return lines;
+
+			const plains = lines.map(stripAnsi);
+			const isRunning = plains.some((p) => p.includes("Running..."));
+			const out: string[] = [];
+
+			for (let i = 0; i < lines.length; i++) {
+				const line = lines[i] ?? "";
+				const plain = plains[i] ?? "";
+				const trimmed = plain.trim();
+
+				// Top / bottom DynamicBorder → sakura gradient frame.
+				if (/^[╭┌╔].*[╮┐╗]$/.test(trimmed) || /^[─═]{3,}$/.test(trimmed)) {
+					const label = isRunning ? "◆ BASH · RUNNING" : "✓ BASH · COMPLETE";
+					out.push(renderSakuraFrameGradient(fitBorderLabel(label, width)));
+					continue;
+				}
+				if (/^[╰└╚].*[╯┘╝]$/.test(trimmed)) {
+					out.push(renderSakuraFrameGradient(bottomBorder(width)));
+					continue;
+				}
+
+				// Command header: `$ cmd` → mint prompt.
+				const cmd = trimmed.match(/^\$\s+(.+)$/);
+				if (cmd) {
+					out.push(`${fg(MINT, "❯")} ${fg([159, 211, 242], cmd[1] ?? "")}`);
+					continue;
+				}
+
+				out.push(line);
+			}
+
+			// Cap bash stream paint when collapsed (Pi expanded flag not on BashExecution;
+			// keep last N lines so live tail still useful).
+			const BASH_COLLAPSED = 16;
+			if (out.length > BASH_COLLAPSED + 4) {
+				const head = out.slice(0, 3); // borders/header-ish
+				const tail = out.slice(-BASH_COLLAPSED);
+				const more = out.length - head.length - tail.length;
+				if (more > 0) {
+					return [
+						...head,
+						fg([113, 104, 121], `… +${more} lines`),
+						...tail,
+					];
+				}
+			}
+			return out;
+		},
+	);
+
 	return () => {
+		cleanupBashRender();
 		cleanupInvalidatePatch();
 		cleanupRenderPatch();
 	};
