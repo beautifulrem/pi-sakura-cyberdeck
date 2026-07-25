@@ -80,14 +80,17 @@ function statusLabel(runtime: ToolExecutionRuntime, statsText: string): string {
 		: `✓ ${name}${deltaPart} · COMPLETE`;
 }
 
+// Grok Build–style status rail: working / success / error.
+const RAIL_WORKING: [number, number, number] = [159, 211, 242]; // sky — in flight
+const RAIL_SUCCESS: [number, number, number] = [174, 229, 197]; // mint
+const RAIL_ERROR: [number, number, number] = [255, 143, 163]; // coral
+
 function leftRailFor(runtime: ToolExecutionRuntime, _theme: Theme): string {
 	const pending = runtime.isPartial !== false;
-	if (pending) return renderSakuraSolid("┃ "); // sakura — matches frame corners
-	if (runtime.result?.isError) {
-		return rgbForeground([255, 143, 163], "┃ ");
-	}
-	// settled success — still sakura so L/R rails match the frame ends
-	return renderSakuraSolid("┃ ");
+	// Thick left bar: blue while running, green on ok, red on fail (Grok Build CLI cue).
+	if (pending) return rgbForeground(RAIL_WORKING, "┃ ");
+	if (runtime.result?.isError) return rgbForeground(RAIL_ERROR, "┃ ");
+	return rgbForeground(RAIL_SUCCESS, "┃ ");
 }
 
 /**
