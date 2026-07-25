@@ -412,7 +412,7 @@ export default function (pi: ExtensionAPI) {
 
     // One outer [] HUD; dots are fixed-width so this never shifts.
     const hud = wrapStatusHud(parts);
-    return hud ? `${verbText}  ${hud}` : verbText;
+    return hud ? `${verbText} ${hud}` : verbText;
   }
 
   function updateDisplay() {
