@@ -80,14 +80,14 @@ function statusLabel(runtime: ToolExecutionRuntime, statsText: string): string {
 		: `✓ ${name}${deltaPart} · COMPLETE`;
 }
 
-// Grok Build–style status rail: working / success / error.
+// Status rail in sakura-macaron pastels (same semantics as Grok Build, softer hue).
 const RAIL_WORKING: [number, number, number] = [159, 211, 242]; // sky — in flight
-const RAIL_SUCCESS: [number, number, number] = [174, 229, 197]; // mint
-const RAIL_ERROR: [number, number, number] = [255, 143, 163]; // coral
+const RAIL_SUCCESS: [number, number, number] = [186, 220, 214]; // seafoam mint (mint+sky, not hard green)
+const RAIL_ERROR: [number, number, number] = [255, 176, 196]; // soft rose (sakura+coral, not hard red)
 
 function leftRailFor(runtime: ToolExecutionRuntime, _theme: Theme): string {
 	const pending = runtime.isPartial !== false;
-	// Thick left bar: blue while running, green on ok, red on fail (Grok Build CLI cue).
+	// Thick left bar: sky / seafoam / rose — status cue without breaking macaron palette.
 	if (pending) return rgbForeground(RAIL_WORKING, "┃ ");
 	if (runtime.result?.isError) return rgbForeground(RAIL_ERROR, "┃ ");
 	return rgbForeground(RAIL_SUCCESS, "┃ ");
