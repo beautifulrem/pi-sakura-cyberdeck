@@ -14,13 +14,18 @@ import type { ClusterRender } from "./types";
 
 export type FixedCluster = PiFixedCluster;
 
+/** Empty / whitespace-only (IdleStatus uses full-width spaces). */
+function isBlankLine(line: string): boolean {
+	return line.replace(/\x1b\[[0-9;]*m/g, "").trim().length === 0;
+}
+
 function renderComponent(component: PiRenderableCapability | null, width: number): string[] {
 	if (!component) return [];
 	const lines = component.render.call(component.target, width);
-	// Strip only trailing blank lines — internal blank lines (e.g. editor
-	// padding in copy-friendly mode) must be preserved.
+	// Strip only truly empty trailing lines (""). Keep full-width space padding
+	// for editor chrome; IdleStatus is filtered later in renderCluster.
 	let end = lines.length;
-	while (end > 0 && visibleWidth(lines[end - 1]) === 0) end--;
+	while (end > 0 && visibleWidth(lines[end - 1] ?? "") === 0) end--;
 	return lines.slice(0, Math.max(end, 1));
 }
 
@@ -77,25 +82,27 @@ export function renderCluster(
 	const above = aboveLines.slice(-remaining);
 	remaining -= above.length;
 
-	const status = statusLines.slice(-remaining);
+	// IdleStatus is two full-width space rows. Drop them after agent_end so the
+	// pinned cluster does not leave a multi-line hole above the editor.
+	const statusCandidate = statusLines.slice(-remaining);
+	const statusHasContent = statusCandidate.some((line) => !isBlankLine(line));
+	const status = statusHasContent ? statusCandidate : [];
 
 	let allLines = [...status, ...above, ...editorLines, ...below, ...footer];
 
-	// Strip leading blanks, but keep ONE when status has real content (Loader top pad
-	// under chat history / tool cards). Without this, working spinner glues to history.
-	const statusHasContent = status.some((line) => visibleWidth(line) > 0);
+	// Keep at most one leading blank when working spinner is active (Loader pad).
+	// Always strip pure-whitespace leading runs (IdleStatus leftovers).
 	let start = 0;
 	if (statusHasContent) {
-		// Allow a single leading blank; collapse runs of 2+.
 		while (
 			start + 1 < allLines.length &&
-			visibleWidth(allLines[start]) === 0 &&
-			visibleWidth(allLines[start + 1] ?? "") === 0
+			isBlankLine(allLines[start] ?? "") &&
+			isBlankLine(allLines[start + 1] ?? "")
 		) {
 			start++;
 		}
 	} else {
-		while (start < allLines.length - 1 && visibleWidth(allLines[start]) === 0) start++;
+		while (start < allLines.length - 1 && isBlankLine(allLines[start] ?? "")) start++;
 	}
 	allLines = allLines.slice(start);
 
