@@ -307,8 +307,11 @@ export const defaultConfig: PolishedTuiConfig = {
 		},
 		colorModes: {},
 	},
+	// Default off: the fixed-editor compositor patches private Pi TUI APIs and is
+	// incompatible with Pi 0.84+ native sticky/fullscreen layout. Prefer Pi's
+	// `tuiMode: "fullscreen"` for sticky editor. Runtime still hard-blocks on 0.84+.
 	fixedEditor: {
-		enabled: true,
+		enabled: false,
 		mouseScroll: true,
 		copyNotice: true,
 	},

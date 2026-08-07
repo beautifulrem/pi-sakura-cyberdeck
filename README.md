@@ -59,7 +59,7 @@ Whisking...  ( HIGH · ↓ ~144 tokens · 00:12 )
 
 ## Requirements
 
-- Pi `>= 0.80`
+- Pi `>= 0.80` (Pi **0.84+** fully supported; see sticky editor note below)
 - Truecolor terminal
 - Nerd Font for configured icons
 
@@ -79,15 +79,35 @@ Then `/settings` → **sakura-macaron**. Restart Pi once.
 
 > Prefer **this package’s shimmer** over stock `npm:pi-claude-shimmer`, and turn off `sakura-matrix` if both fight for the working indicator.
 
+### Pi 0.84+ sticky editor
+
+Pi 0.84 introduced a native fullscreen TUI with a sticky editor. This pack’s experimental **fixed editor** compositor patches private TUI APIs and is **off by default** from v1.1.5; it is also hard-blocked at runtime on Pi 0.84+ layouts even if re-enabled in config.
+
+For sticky editor + scrollable transcript on Pi 0.84+:
+
+```jsonc
+// ~/.pi/agent/settings.json
+{
+  "tuiMode": "fullscreen"
+}
+```
+
+Or start with `pi --tui-mode fullscreen`. Pack styling (editor chrome, footer, shimmer) still applies.
+
+Config file for this pack’s Zentui: `~/.pi/agent/sakura-cyberdeck-zentui.json`.
+
 Recommended companion settings (optional, user-owned):
 
 ```jsonc
-// ~/.pi/agent/zentui.json (excerpt)
+// ~/.pi/agent/sakura-cyberdeck-zentui.json (excerpt)
 {
   "colors": {
     "contextNormal": "syntaxFunction",
     "cost": "mdCode",
     "editorBorder": "sakura-macaron-gradient"
+  },
+  "fixedEditor": {
+    "enabled": false
   }
 }
 ```
@@ -107,11 +127,15 @@ Avoid stacking with `pi-zentui`, `pi-powerline-footer`, `@tifan/pi-fixed-editor`
 
 ## Changelog
 
+### 1.1.5
+
+- **Pi 0.84+**: disable fixed-editor by default and hard-block the compositor on native sticky/fullscreen TUI layouts (prevents broken input after upgrading Pi)
+- Document using Pi `tuiMode: "fullscreen"` for sticky editor instead of the experimental fixed-editor compositor
+
 ### 1.1.4
 
 - **Thinking HUD**: remove the brief pink per-thought timer; the muted total turn timer remains
 - **Fixed editor**: cluster mouse clicks now pass through to below-editor widgets while transcript selection stays owned by the compositor
-
 ### 1.1.3
 
 - **Token HUD**: provider-reported `usage.output` is authoritative and accumulated across tool turns

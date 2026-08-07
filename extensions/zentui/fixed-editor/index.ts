@@ -117,7 +117,32 @@ function warnUnsupported(ctx: ExtensionContext): void {
 	if (didWarnUnsupported || !ctx.hasUI) return;
 	didWarnUnsupported = true;
 	console.warn(
-		"[zentui] Fixed editor: unsupported Pi TUI layout — falling back to normal rendering.",
+		"[sakura-cyberdeck] Fixed editor: unsupported Pi TUI layout — falling back to normal rendering.",
+	);
+}
+
+/**
+ * Pi 0.84+ owns sticky editor + scrollable transcript via native fullscreen TUI.
+ * The experimental fixed-editor compositor patches private TUI methods and can
+ * break keyboard input on those releases. Upstream pi-zentui removed it in 0.18.0.
+ */
+function isNativeStickyEditorPi(tui: TUI): boolean {
+	const mode = Reflect.get(tui as object, "mode");
+	if (mode === "fullscreen") return true;
+	// Layout-root / viewport markers introduced with the 0.84 TUI rewrite.
+	if (Reflect.get(tui as object, "layoutRoot") !== undefined) return true;
+	if (Reflect.get(tui as object, "fullscreenLayoutRoot") !== undefined) return true;
+	const children = Reflect.get(tui as object, "children");
+	// regular-mode root gained pendingMessagesContainer in 0.84
+	if (Array.isArray(children) && children.length >= 7) return true;
+	return false;
+}
+
+function warnIncompatiblePi(ctx: ExtensionContext): void {
+	if (didWarnUnsupported || !ctx.hasUI) return;
+	didWarnUnsupported = true;
+	console.warn(
+		"[sakura-cyberdeck] Fixed editor disabled: incompatible with Pi 0.84+ native TUI. Use settings tuiMode=\"fullscreen\" for sticky editor, or keep fixedEditor.enabled=false.",
 	);
 }
 
@@ -130,6 +155,12 @@ function installFromProbe(
 	try {
 		const config = getConfig();
 		if (!config.fixedEditor?.enabled) return;
+
+		// Hard block on Pi 0.84+ even if config still has fixedEditor enabled.
+		if (isNativeStickyEditorPi(tui)) {
+			warnIncompatiblePi(ctx);
+			return;
+		}
 
 		const capabilities = inspectPiTui(tui);
 		if (!capabilities) {

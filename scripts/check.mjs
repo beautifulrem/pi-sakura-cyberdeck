@@ -64,4 +64,19 @@ const shimmer = await readFile(resolve(root, "extensions/claude-shimmer/index.ts
 assert.doesNotMatch(shimmer, /thinkingDuration|THOUGHT_DISPLAY_MS|thoughtTimer/);
 assert.match(shimmer, /parts\.push\(rgbAnsi\(MUTED, formatDigital\(elapsed\)\)\)/);
 
+// Pi 0.84+: fixed editor must stay off by default and hard-block native sticky TUI layouts.
+const zentuiConfig = await readFile(resolve(root, "extensions/zentui/config.ts"), "utf8");
+assert.match(
+  zentuiConfig,
+  /fixedEditor:\s*\{\s*\/\/[\s\S]*?enabled:\s*false|fixedEditor:\s*\{\s*enabled:\s*false/,
+);
+const fixedEditorIndex = await readFile(
+  resolve(root, "extensions/zentui/fixed-editor/index.ts"),
+  "utf8",
+);
+assert.match(fixedEditorIndex, /function isNativeStickyEditorPi/);
+assert.match(fixedEditorIndex, /Hard block on Pi 0\.84\+/);
+assert.match(fixedEditorIndex, /if \(isNativeStickyEditorPi\(tui\)\)/);
+assert.equal(manifest.version, "1.1.5");
+
 console.log("pi-sakura-cyberdeck package check passed");
