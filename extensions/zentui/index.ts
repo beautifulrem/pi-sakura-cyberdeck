@@ -442,15 +442,15 @@ export default function (pi: ExtensionAPI) {
 			);
 		}
 		lastConfigProblem = loaded.problem;
-		if (loaded.legacyFixedEditorEnabled && !fixedEditorNoticeShown) {
+		if (loaded.hasLegacyFixedEditor && !fixedEditorNoticeShown) {
 			fixedEditorNoticeShown = true;
 			try {
-				// One-time migration so the notice is not repeated on every launch.
+				// One-time migration so the block (and any notice) is not repeated on every launch.
 				currentConfig = removeLegacyFixedEditorConfig();
 			} catch {
 				// Read-only config: the notice still shows only once per process.
 			}
-			ctx.ui.notify(FIXED_EDITOR_REMOVED_MESSAGE, "info");
+			if (loaded.legacyFixedEditorEnabled) ctx.ui.notify(FIXED_EDITOR_REMOVED_MESSAGE, "info");
 		}
 	};
 

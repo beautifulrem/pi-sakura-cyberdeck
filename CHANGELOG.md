@@ -24,7 +24,7 @@ Supported Pi versions: 0.87.1 and newer (tested on 0.87.1 and 0.99.1).
 
 ### Fixed — editor, footer and settings (Zentui)
 
-- `/zentui fixed-editor disable|enable|toggle` was parsed as the *editor* switch and disabled the main editor, persisting it to config. Direct commands are now parsed strictly (`/zentui <target> <on|off|toggle>`); anything else shows usage.
+- `/zentui fixed-editor disable|enable|toggle` was parsed as the *editor* switch and disabled the main editor, persisting it to config. Direct commands are now parsed strictly (`/zentui <target> <on|off|toggle>`); anything else shows usage. If this bug turned your editor off earlier, run `/zentui editor on` once.
 - Lines you typed in the editor that contained both the model and provider name (e.g. "compare gpt-5 with OpenAI") were deleted from the editor view. Only lines Zentui itself renders are ever stripped now.
 - Footer token and cost totals undercounted: compaction, branch-summary, `usage` entries and tool-result usage (subagents / codemode) were missing. Totals now match Pi's own footer.
 - An extension status with a key such as `constructor` or `__proto__` crashed every footer render.
@@ -87,7 +87,8 @@ Supported Pi versions: 0.87.1 and newer (tested on 0.87.1 and 0.99.1).
 
 - A malicious repository could inject terminal escape sequences (e.g. clipboard writes) through `package.json` version, folder names, branch/tag names or runtime output shown in the footer. All external text is now sanitised.
 - Git runs with `GIT_OPTIONAL_LOCKS=0` and `-c core.fsmonitor=false`, and project probes (git, runtime, package) are skipped in untrusted projects.
-- Config writes are atomic; broken config files are reported instead of silently replaced.
+- Config and state writes (Zentui, matrix, changelog) are atomic; broken config files are reported instead of silently replaced.
+- Matrix settings now live in Pi's agent directory (respects `PI_CODING_AGENT_DIR`) like the other pack files.
 - All UI work is guarded for disposed UIs and non-TUI modes; shutdown cleanup is idempotent; nothing prints with `console.*` while the TUI runs.
 
 ### Changed
@@ -95,7 +96,7 @@ Supported Pi versions: 0.87.1 and newer (tested on 0.87.1 and 0.99.1).
 - **Sakura Matrix is off by default** and is now a rain widget only (it no longer changes the working message or indicator). Turn it on with `/sakura-matrix on`; saved settings are kept.
 - New `/sakura-matrix` subcommands: `help`, `height N`; clearer validation and "not saved" messages.
 - The footer pulse animation is opt-in: `/zentui pulse on` (setting `animations.footerPulse`).
-- New switch `features.messageStyle` (`/zentui messages on|off`) controls message and tool styling independently of the editor.
+- New switch `features.messageStyle` (`/zentui messages on|off`) controls message and tool styling independently of the editor. Existing configs keep their previous look: if you had the editor turned off, message styling stays off until you enable it.
 - Tool cards keep the sakura frame and status rail, but edit/self-rendered tools and image results use Pi's stock rendering.
 - The "Thought trail" tree is gone; hidden thinking shows a `✦ Thought` label.
 - Header height is fixed; the header is only installed in the interactive TUI.
@@ -106,7 +107,7 @@ Supported Pi versions: 0.87.1 and newer (tested on 0.87.1 and 0.99.1).
 
 ### Removed
 
-- The experimental fixed-editor compositor (`fixedEditor` settings and `/zentui fixed-editor`). It was already disabled on Pi 0.84+; use Pi's `"tuiMode": "fullscreen"`. Old `fixedEditor` settings are cleaned up automatically with a one-time notice.
+- The experimental fixed-editor compositor (`fixedEditor` settings and `/zentui fixed-editor`). It was already disabled on Pi 0.84+; use Pi's `"tuiMode": "fullscreen"`. Old `fixedEditor` settings are removed from your config automatically (with a one-time notice if it was enabled).
 - The `!cmd` output restyling and the tool-body rewriting described above.
 - Unused code paths and exports (dual-quota leftovers, dead helpers).
 

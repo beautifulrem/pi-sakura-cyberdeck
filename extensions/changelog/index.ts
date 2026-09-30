@@ -12,7 +12,7 @@ import { type Component, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@
 
 const WIDGET_KEY = "sakura-cyberdeck-changelog";
 const STATE_FILE = "sakura-cyberdeck-state.json";
-const MAX_NOTICE_BULLETS = 8;
+const MAX_NOTICE_BULLETS = 10;
 
 export interface ChangelogSection {
 	title: string;
@@ -103,7 +103,10 @@ function bulletText(line: string): string {
 }
 
 function countBullets(entry: ChangelogEntry): number {
-	return entry.sections.reduce((n, s) => n + s.lines.filter((l) => isBullet(l) && !/^\s{2,}/.test(l)).length, 0);
+	// Highlights repeat items listed in the other sections.
+	return entry.sections
+		.filter((s) => !/highlight/i.test(s.title))
+		.reduce((n, s) => n + s.lines.filter((l) => isBullet(l) && !/^\s{2,}/.test(l)).length, 0);
 }
 
 // ---------------------------------------------------------------------------

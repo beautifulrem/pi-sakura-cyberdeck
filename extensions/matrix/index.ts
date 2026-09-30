@@ -4,14 +4,14 @@
  * widget: it never touches Pi's working message/indicator (the shimmer owns those).
  * One timer runs only while the rain is visible; idle CPU is zero.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { fgAnsi, getColorMode, syncColorMode, type RGB } from "../shared/color";
 
 const WIDGET_KEY = "sakura-matrix-engine";
-export const CONFIG_PATH = join(homedir(), ".pi", "agent", "sakura-cyberdeck-matrix.json");
+export const CONFIG_PATH = join(getAgentDir(), "sakura-cyberdeck-matrix.json");
 const PREVIEW_MS = 5_000;
 const GLYPHS = [..."0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾗﾘﾙﾚﾛﾜﾝ"];
 const BG: RGB = [20, 17, 26];
@@ -91,7 +91,9 @@ export function loadConfig(path = CONFIG_PATH): { config: MatrixConfig; error?: 
 export function saveConfig(config: MatrixConfig, path = CONFIG_PATH): string | undefined {
   try {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    renameSync(tmp, path);
     return undefined;
   } catch (error) {
     return error instanceof Error ? error.message : String(error);

@@ -33,7 +33,8 @@ test("probes only run for visible segments", () => {
 	);
 
 	const format = planProjectProbes(mergeConfig({ footerFormat: "$cwd $git_tag$fill$package $time" }));
-	assert.equal(format.git?.readStatus, false);
+	// The tag is attached to the commit that `git status` reports, so status must run too.
+	assert.equal(format.git?.readStatus, true);
 	assert.equal(format.git?.readExactTag, true);
 	assert.equal(format.runtime, false);
 	assert.equal(format.packageVersion, true);

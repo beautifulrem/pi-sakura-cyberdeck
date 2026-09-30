@@ -68,6 +68,7 @@ test("missing config loads defaults without a problem; saves are atomic JSON", (
 	assert.deepEqual(loadConfigWithDiagnostics(path), {
 		config: defaultConfig,
 		legacyFixedEditorEnabled: false,
+		hasLegacyFixedEditor: false,
 	});
 	const saved = saveAnimationsPatch({ footerPulse: true }, path);
 	assert.equal(saved.animations.footerPulse, true);
