@@ -26,6 +26,19 @@ function compareKeys(a: ExtensionStatusSegment, b: ExtensionStatusSegment): numb
 	return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
 }
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
+const UNSAFE_DISPLAY_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+/**
+ * Make an externally sourced string (cwd, branch, tag, runtime/package version,
+ * user@host) safe for a single footer line: strips ANSI/OSC sequences, C0/C1
+ * control characters and bidi overrides so repository content cannot inject
+ * terminal escapes or reorder the status line.
+ */
+export function sanitizeDisplayText(value: string): string {
+	return stripVTControlCharacters(value).replace(UNSAFE_DISPLAY_CHARS, "");
+}
+
 function normalizeStatusWhitespace(value: string): string {
 	return value
 		.replace(/[\r\n\t\f\v]+/g, " ")
@@ -42,7 +55,7 @@ function hasVisibleStatusText(value: string): boolean {
 	return sanitizeExtensionStatusText(value).length > 0;
 }
 
-export function sanitizeExtensionStatusOriginalText(value: string): string {
+function sanitizeExtensionStatusOriginalText(value: string): string {
 	const safeSequences: string[] = [];
 	const protectedValue = value.replace(safeSgrPattern, (sequence) => {
 		const index = safeSequences.push(sequence) - 1;

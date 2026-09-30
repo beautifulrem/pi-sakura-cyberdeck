@@ -5,25 +5,27 @@ import type {
 	Theme,
 } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
+import { syncColorMode } from "../shared/color";
 import {
+	type AnimationsConfig,
 	type ColorSourcesConfig,
 	type ContextStyle,
+	defaultConfig,
 	type ExtensionStatusColorMode,
 	type ExtensionStatusPlacement,
-	ensureConfigExists,
-	type FixedEditorConfig,
 	type FooterSegmentsConfig,
 	type GitBranchConfig,
 	type IconMode,
-	loadConfig,
+	loadConfigWithDiagnostics,
 	type PathDisplayConfig,
 	type PolishedTuiConfig,
+	removeLegacyFixedEditorConfig,
 	type SeparatorStyle,
+	saveAnimationsPatch,
 	saveColorSourcesPatch,
 	saveContextStylePatch,
 	saveExtensionStatusColorMode,
 	saveExtensionStatusPlacement,
-	saveFixedEditorPatch,
 	saveFooterFormatPatch,
 	saveFooterSegmentsPatch,
 	saveGitBranchPatch,
@@ -33,18 +35,15 @@ import {
 	saveUiFeaturesPatch,
 	type UiFeaturesConfig,
 } from "./config";
-import {
-	disposeFixedEditor,
-	installFixedEditorProbe,
-	removeFixedEditorProbe,
-} from "./fixed-editor";
 import { installFooter } from "./footer";
-import { buildSessionDurationLabel, invalidateUsageTotalsCache } from "./format";
+import { invalidateSessionCaches } from "./format";
 import { emptyGitStatus, readGitStatus } from "./git";
 import { LiveContextController } from "./live-context";
 import { readPackageVersionResult } from "./package-version";
 import {
 	createProjectRefreshScheduler,
+	type ProjectProbePlan,
+	planProjectProbes,
 	type ScheduleProjectRefreshOptions,
 	type StopProjectRefreshInterval,
 	startProjectRefreshInterval,
@@ -53,9 +52,9 @@ import { applyProjectRefreshToState } from "./project-state";
 import { readRuntimeInfo } from "./runtime";
 import { installSelectorBorderStyle } from "./selector-border";
 import { SessionLifecycle } from "./session-lifecycle";
-import { registerZentuiSettingsCommand } from "./settings-command";
+import { FIXED_EDITOR_REMOVED_MESSAGE, registerZentuiSettingsCommand } from "./settings-command";
 import { createInitialState, type FooterState, syncState } from "./state";
-import { installThinkingMessageStyle } from "./thinking-message";
+import { applyThinkingLabel } from "./thinking-message";
 import { installToolExecutionStyle } from "./tool-execution";
 import { PolishedEditor, WrappedPolishedEditor } from "./ui";
 import { installUserMessageStyle } from "./user-message";
@@ -84,12 +83,23 @@ function getZentuiEditorBaseFactory(factory: EditorFactory | undefined): EditorF
 	return (factory as ZentuiEditorFactory | undefined)?.[ZENTUI_EDITOR_BASE_FACTORY];
 }
 
+/** Interactive terminal UI only (not RPC/JSON/print). Falls back to `hasUI` on hosts without `mode`. */
 function isTuiContext(ctx: ExtensionContext): boolean {
 	try {
-		const mode = (ctx as ExtensionContext & { mode?: string }).mode;
+		const mode = (ctx as { mode?: string }).mode;
 		return ctx.hasUI && (mode === undefined || mode === "tui");
 	} catch {
 		return false;
+	}
+}
+
+/** Probes run git / version managers inside the project; skip them when the user declined trust. */
+function isProjectTrusted(ctx: ExtensionContext): boolean {
+	try {
+		const check = (ctx as { isProjectTrusted?: () => boolean }).isProjectTrusted;
+		return typeof check === "function" ? check.call(ctx) !== false : true;
+	} catch {
+		return true;
 	}
 }
 
@@ -97,9 +107,14 @@ export default function (pi: ExtensionAPI) {
 	const state: FooterState = createInitialState(emptyGitStatus());
 	const sessionLifecycle = new SessionLifecycle();
 
-	let currentConfig: PolishedTuiConfig = loadConfig();
+	let currentConfig: PolishedTuiConfig = defaultConfig;
+	/** Bumped on every config change; keys the probe plan below. */
+	let configVersion = 0;
+	let probePlan: { version: number; plan: ProjectProbePlan } | undefined;
+	let activeCtx: ExtensionContext | undefined;
 	let activeTheme: Theme | undefined;
 	let requestFooterRender: (() => void) | undefined;
+	let syncFooterAnimation: (() => void) | undefined;
 	let getActiveExtensionStatuses: () => ReadonlyMap<string, string> = () => new Map();
 	let stopRefreshInterval: StopProjectRefreshInterval = () => {};
 	let cleanupPrototypePatches: () => void = () => {};
@@ -109,9 +124,11 @@ export default function (pi: ExtensionAPI) {
 	let installedEditorFactory: EditorFactory | undefined;
 	let wrappedEditorFactory: EditorFactory | undefined;
 	let prototypePatchesInstalled = false;
-	let stopSessionTimer: () => void = () => {};
-	let lastDurationLabel = "";
+	let clockTimer: ReturnType<typeof setTimeout> | undefined;
 	let lastProjectCwd: string | undefined;
+	let agentWorking = false;
+	let lastConfigProblem: string | undefined;
+	let fixedEditorNoticeShown = false;
 
 	const refresh = () => {
 		if (sessionLifecycle.isCurrent()) requestFooterRender?.();
@@ -121,35 +138,32 @@ export default function (pi: ExtensionAPI) {
 	const getCurrentConfig = () => currentConfig;
 	const getThinkingLevel = () =>
 		sessionLifecycle.isCurrent() ? pi.getThinkingLevel() : ("off" as const);
-	const syncFooterState = (ctx: ExtensionContext) =>
-		syncState(state, ctx, currentConfig.icons.cacheHit);
+	const getProbePlan = (): ProjectProbePlan => {
+		if (probePlan?.version !== configVersion) {
+			probePlan = { version: configVersion, plan: planProjectProbes(currentConfig) };
+		}
+		return probePlan.plan;
+	};
 
-	type ProjectRefreshTarget = { cwd: string; generation: number };
-	const refreshProjectState = async ({ cwd, generation }: ProjectRefreshTarget) => {
+	type ProjectRefreshTarget = { cwd: string; generation: number; trusted: boolean };
+	const refreshProjectState = async ({ cwd, generation, trusted }: ProjectRefreshTarget) => {
 		if (!sessionLifecycle.isCurrent(generation)) return;
-		const gitCommitConfig = currentConfig.gitCommit;
-		const gitMetricsConfig = currentConfig.gitMetrics;
-		const segments = currentConfig.footerSegments;
-		const fmt = currentConfig.footerFormat;
-		// Enable optional probes when the segment is on OR a custom footerFormat
-		// references the relevant variable. Mirrors the session-duration timer
-		// pattern so format-only users still get data.
-		const formatNeedsTag = /\$\{?(?:git_tag|tag)\b/.test(fmt);
-		const formatNeedsCommit = /\$\{?(?:git_commit|commit)\b/.test(fmt);
-		const formatNeedsMetrics = /\$\{?(?:git_metrics|git_added|git_deleted)\b/.test(fmt);
-		const formatNeedsPackage = /\$\{?(?:package|package_version)\b/.test(fmt);
-		const wantExactTag =
-			((segments.gitCommit || formatNeedsCommit) && gitCommitConfig.showTag) || formatNeedsTag;
-		const wantMetrics = segments.gitMetrics || formatNeedsMetrics;
-		const wantPackage = segments.packageVersion || formatNeedsPackage;
+		if (!trusted) {
+			// Untrusted project: no subprocesses, no manifest reads; show nothing stale.
+			lastProjectCwd = applyProjectRefreshToState(state, {
+				cwd,
+				previousCwd: lastProjectCwd,
+				git: { kind: "not_a_repo" },
+				runtime: { kind: "ok", runtime: undefined },
+				packageVersion: { kind: "ok", result: null },
+			});
+			return;
+		}
+		const plan = getProbePlan();
 		const [git, runtime, packageVersion] = await Promise.all([
-			readGitStatus(cwd, {
-				readExactTag: wantExactTag,
-				readMetrics: wantMetrics,
-				ignoreSubmodules: gitMetricsConfig.ignoreSubmodules,
-			}),
-			readRuntimeInfo(cwd),
-			wantPackage ? readPackageVersionResult(cwd) : Promise.resolve(undefined),
+			plan.git ? readGitStatus(cwd, plan.git) : undefined,
+			plan.runtime ? readRuntimeInfo(cwd) : undefined,
+			plan.packageVersion ? readPackageVersionResult(cwd) : undefined,
 		]);
 		if (!sessionLifecycle.isCurrent(generation)) return;
 		lastProjectCwd = applyProjectRefreshToState(state, {
@@ -167,15 +181,19 @@ export default function (pi: ExtensionAPI) {
 		options?: ScheduleProjectRefreshOptions,
 	) => {
 		const generation = sessionLifecycle.currentGeneration();
-		if (!sessionLifecycle.isCurrent(generation)) return;
-		const cwd = ctx.cwd;
-		projectRefreshScheduler.schedule({ cwd, generation }, options);
+		if (!sessionLifecycle.isCurrent(generation) || !footerInstalled) return;
+		const plan = getProbePlan();
+		if (!plan.git && !plan.runtime && !plan.packageVersion) return;
+		projectRefreshScheduler.schedule(
+			{ cwd: ctx.cwd, generation, trusted: isProjectTrusted(ctx) },
+			options,
+		);
 	};
 
 	const refreshInteractiveState = (ctx: ExtensionContext, project = false) => {
-		if (!sessionLifecycle.isCurrent() || !ctx.hasUI) return;
-		syncFooterState(ctx);
-		if (project && currentConfig.features.statusLine) scheduleProjectRefresh(ctx);
+		if (!sessionLifecycle.isCurrent() || !isTuiContext(ctx)) return;
+		syncState(state, ctx);
+		if (project) scheduleProjectRefresh(ctx);
 		refresh();
 	};
 
@@ -185,56 +203,80 @@ export default function (pi: ExtensionAPI) {
 		projectRefreshScheduler.stop();
 	};
 
-	const startSessionTimer = () => {
-		stopSessionTimer();
-		lastDurationLabel = "";
-		const segments = currentConfig.footerSegments;
-		const format = currentConfig.footerFormat ?? "";
-		const needsWallClock = segments.time || /\$\{?time\b/.test(format);
-		const needsDuration =
-			segments.sessionDuration || /\$\{?(?:session_duration|duration)\b/.test(format);
-		if (!currentConfig.features.statusLine || !(needsWallClock || needsDuration)) return;
-
-		const timer = setInterval(() => {
-			if (!sessionLifecycle.isCurrent()) return;
-			if (needsWallClock) {
-				refresh();
-				return;
-			}
-			const label = state.sessionStartEpoch
-				? buildSessionDurationLabel(state.sessionStartEpoch)
-				: "";
-			if (label === lastDurationLabel) return;
-			lastDurationLabel = label;
-			refresh();
-		}, 1000);
-		timer.unref?.();
-		stopSessionTimer = () => {
-			clearInterval(timer);
-			stopSessionTimer = () => {};
-		};
+	const restartProjectRefreshInterval = (ctx: ExtensionContext) => {
+		stopRefreshInterval();
+		stopRefreshInterval = () => {};
+		const plan = getProbePlan();
+		if (!footerInstalled || (!plan.git && !plan.runtime && !plan.packageVersion)) return;
+		stopRefreshInterval = startProjectRefreshInterval(currentConfig.projectRefreshIntervalMs, () =>
+			scheduleProjectRefresh(ctx),
+		);
 	};
 
-	const installPrototypePatches = () => {
+	const stopClockTimer = () => {
+		if (clockTimer) clearTimeout(clockTimer);
+		clockTimer = undefined;
+	};
+
+	/**
+	 * One self-rescheduling timeout, only while time/duration is visible: wakes at
+	 * the next minute boundary for HH:MM, or when the duration label changes
+	 * (every second below one hour, every minute after).
+	 */
+	const startClockTimer = () => {
+		stopClockTimer();
+		if (!footerInstalled || !currentConfig.features.statusLine) return;
+		const { clock, duration } = getProbePlan();
+		if (!clock && !duration) return;
+		const schedule = () => {
+			const now = Date.now();
+			let delay = Number.POSITIVE_INFINITY;
+			if (clock) delay = 60_000 - (now % 60_000);
+			if (duration && state.sessionStartEpoch) {
+				const elapsed = Math.max(0, now - state.sessionStartEpoch);
+				const step = elapsed < 3_600_000 ? 1_000 : 60_000;
+				delay = Math.min(delay, step - (elapsed % step));
+			}
+			clockTimer = setTimeout(
+				() => {
+					clockTimer = undefined;
+					if (!sessionLifecycle.isCurrent()) return;
+					refresh();
+					schedule();
+				},
+				Math.max(50, delay + 20),
+			);
+			clockTimer.unref?.();
+		};
+		schedule();
+	};
+
+	const installPrototypePatches = (ctx: ExtensionContext) => {
 		if (prototypePatchesInstalled) return;
 		const cleanupSelectorBorderStyle = installSelectorBorderStyle(getActiveTheme, getCurrentConfig);
 		const cleanupUserMessageStyle = installUserMessageStyle(getActiveTheme, getCurrentConfig);
 		const cleanupToolExecutionStyle = installToolExecutionStyle(getActiveTheme);
-		const cleanupThinkingMessageStyle = installThinkingMessageStyle(getActiveTheme);
 		cleanupPrototypePatches = () => {
-			cleanupThinkingMessageStyle();
 			cleanupToolExecutionStyle();
 			cleanupSelectorBorderStyle();
 			cleanupUserMessageStyle();
 		};
 		prototypePatchesInstalled = true;
+		applyThinkingLabel(ctx);
 	};
 
-	const uninstallPrototypePatches = () => {
+	const uninstallPrototypePatches = (ctx?: ExtensionContext) => {
+		const wasInstalled = prototypePatchesInstalled;
 		cleanupPrototypePatches();
 		cleanupPrototypePatches = () => {};
 		prototypePatchesInstalled = false;
+		if (wasInstalled && ctx) applyThinkingLabel(ctx, false);
 	};
+
+	const editorMeta = () => ({
+		modelLabel: state.modelLabel,
+		providerLabel: state.providerLabel,
+	});
 
 	const makeEditorFactory = (ctx: ExtensionContext): ZentuiEditorFactory => {
 		const sessionTheme = ctx.ui.theme;
@@ -245,10 +287,7 @@ export default function (pi: ExtensionAPI) {
 				keybindings,
 				sessionTheme,
 				getCurrentConfig,
-				() => ({
-					modelLabel: state.modelLabel,
-					providerLabel: state.providerLabel,
-				}),
+				editorMeta,
 				getThinkingLevel,
 			)) as ZentuiEditorFactory;
 		factory[ZENTUI_EDITOR_FACTORY] = true;
@@ -265,10 +304,7 @@ export default function (pi: ExtensionAPI) {
 				baseFactory(tui, theme, keybindings),
 				sessionTheme,
 				getCurrentConfig,
-				() => ({
-					modelLabel: state.modelLabel,
-					providerLabel: state.providerLabel,
-				}),
+				editorMeta,
 				getThinkingLevel,
 			)) as ZentuiEditorFactory;
 		factory[ZENTUI_EDITOR_FACTORY] = true;
@@ -283,29 +319,25 @@ export default function (pi: ExtensionAPI) {
 			return true;
 		}
 
-		installPrototypePatches();
 		const currentZentuiBaseFactory = getZentuiEditorBaseFactory(currentFactory);
+		let nextFactory: ZentuiEditorFactory;
 		if (currentFactory && isZentuiEditorFactory(currentFactory)) {
 			wrappedEditorFactory = currentZentuiBaseFactory;
-			const nextFactory = currentZentuiBaseFactory
+			nextFactory = currentZentuiBaseFactory
 				? makeWrappedEditorFactory(ctx, currentZentuiBaseFactory)
 				: makeEditorFactory(ctx);
-			ctx.ui.setEditorComponent(nextFactory);
-			installedEditorFactory = nextFactory;
 			editorInstallMode = currentZentuiBaseFactory ? "wrapper" : "standalone";
 		} else if (currentFactory) {
 			wrappedEditorFactory = currentFactory;
-			const nextFactory = makeWrappedEditorFactory(ctx, currentFactory);
-			ctx.ui.setEditorComponent(nextFactory);
-			installedEditorFactory = nextFactory;
+			nextFactory = makeWrappedEditorFactory(ctx, currentFactory);
 			editorInstallMode = "wrapper";
 		} else {
 			wrappedEditorFactory = undefined;
-			const nextFactory = makeEditorFactory(ctx);
-			ctx.ui.setEditorComponent(nextFactory);
-			installedEditorFactory = nextFactory;
+			nextFactory = makeEditorFactory(ctx);
 			editorInstallMode = "standalone";
 		}
+		ctx.ui.setEditorComponent(nextFactory);
+		installedEditorFactory = nextFactory;
 		editorInstalled = true;
 		return true;
 	};
@@ -314,7 +346,6 @@ export default function (pi: ExtensionAPI) {
 		const currentFactory = ctx.ui.getEditorComponent();
 		if (currentFactory && !isZentuiEditorFactory(currentFactory)) return false;
 
-		uninstallPrototypePatches();
 		ctx.ui.setEditorComponent(
 			editorInstallMode === "wrapper" && wrappedEditorFactory ? wrappedEditorFactory : undefined,
 		);
@@ -331,33 +362,34 @@ export default function (pi: ExtensionAPI) {
 			setRequestRender: (fn) => {
 				requestFooterRender = fn;
 			},
-			scheduleProjectRefresh,
+			scheduleProjectRefresh: () => scheduleProjectRefresh(ctx),
 			setExtensionStatusesGetter(fn) {
 				getActiveExtensionStatuses = fn ?? (() => new Map());
 			},
 			getLiveContext: () => liveContext.get(),
+			isAgentWorking: () => agentWorking,
+			setAnimationSync: (fn) => {
+				syncFooterAnimation = fn;
+			},
 		});
 		footerInstalled = true;
 		stopProjectRefresh();
-		stopRefreshInterval = startProjectRefreshInterval(currentConfig.projectRefreshIntervalMs, () =>
-			scheduleProjectRefresh(ctx),
-		);
-		// Paint footer shell first; git/package/runtime scan on next tick.
+		restartProjectRefreshInterval(ctx);
+		// Paint the footer shell first; project probes run on the next tick.
 		refresh();
-		const defer = setTimeout(() => {
-			if (!sessionLifecycle.isCurrent()) return;
+		sessionLifecycle.defer(() => {
 			scheduleProjectRefresh(ctx, { force: true });
-			startSessionTimer();
-		}, 0);
-		(defer as { unref?: () => void }).unref?.();
+			startClockTimer();
+		});
 	};
 
 	const uninstallStatusLine = (ctx: ExtensionContext) => {
-		stopSessionTimer();
+		stopClockTimer();
 		stopProjectRefresh();
 		ctx.ui.setFooter(undefined);
 		footerInstalled = false;
 		requestFooterRender = undefined;
+		syncFooterAnimation = undefined;
 		getActiveExtensionStatuses = () => new Map();
 	};
 
@@ -365,11 +397,15 @@ export default function (pi: ExtensionAPI) {
 		const result: ApplyUiResult = { editorBlocked: false };
 		if (!isTuiContext(ctx)) return result;
 		activeTheme = ctx.ui.theme;
+
+		if (currentConfig.features.messageStyle) installPrototypePatches(ctx);
+		else if (prototypePatchesInstalled) uninstallPrototypePatches(ctx);
+
 		if (currentConfig.features.editor) {
 			const currentFactory = ctx.ui.getEditorComponent();
 			const editorMissingOrReplaced = !editorInstalled || !isZentuiEditorFactory(currentFactory);
 			if (editorMissingOrReplaced) result.editorBlocked = !installEditor(ctx);
-		} else if (editorInstalled || prototypePatchesInstalled) {
+		} else if (editorInstalled) {
 			result.editorBlocked = !uninstallEditor(ctx);
 		}
 
@@ -381,21 +417,56 @@ export default function (pi: ExtensionAPI) {
 		return result;
 	};
 
+	/** Adopt a new config: re-plan probes/timers/animation and repaint immediately. */
+	const applyConfig = (next: PolishedTuiConfig) => {
+		currentConfig = next;
+		configVersion += 1;
+		syncFooterAnimation?.();
+		const ctx = activeCtx;
+		if (ctx && footerInstalled && sessionLifecycle.isCurrent()) {
+			restartProjectRefreshInterval(ctx);
+			startClockTimer();
+			scheduleProjectRefresh(ctx, { force: true });
+		}
+		refresh();
+	};
+
+	const loadConfigForSession = (ctx: ExtensionContext) => {
+		const loaded = loadConfigWithDiagnostics();
+		currentConfig = loaded.config;
+		configVersion += 1;
+		if (loaded.problem && loaded.problem !== lastConfigProblem) {
+			ctx.ui.notify(
+				`Zentui config is invalid, using defaults (settings changes are not saved until it is fixed): ${loaded.problem}`,
+				"warning",
+			);
+		}
+		lastConfigProblem = loaded.problem;
+		if (loaded.legacyFixedEditorEnabled && !fixedEditorNoticeShown) {
+			fixedEditorNoticeShown = true;
+			try {
+				// One-time migration so the notice is not repeated on every launch.
+				currentConfig = removeLegacyFixedEditorConfig();
+			} catch {
+				// Read-only config: the notice still shows only once per process.
+			}
+			ctx.ui.notify(FIXED_EDITOR_REMOVED_MESSAGE, "info");
+		}
+	};
+
 	const installUi = (ctx: ExtensionContext) => {
 		if (!isTuiContext(ctx)) return;
+		activeCtx = ctx;
 		activeTheme = ctx.ui.theme;
+		syncColorMode(ctx.ui.theme);
 		uninstallPrototypePatches();
 		footerInstalled = false;
 		editorInstalled = false;
 		installedEditorFactory = undefined;
-		ensureConfigExists();
-		currentConfig = loadConfig();
-		syncFooterState(ctx);
+		loadConfigForSession(ctx);
+		syncState(state, ctx);
 		stopProjectRefresh();
 		applyConfiguredUi(ctx);
-		if (currentConfig.fixedEditor?.enabled) {
-			installFixedEditorProbe(ctx, getCurrentConfig, sessionLifecycle);
-		}
 		refresh();
 	};
 
@@ -410,16 +481,17 @@ export default function (pi: ExtensionAPI) {
 		});
 	};
 
+	/** Idempotent: the lifecycle guard makes repeated shutdowns no-ops. */
 	const cleanupUi = (ctx?: ExtensionContext) => {
 		if (!ctx || !sessionLifecycle.isCurrent()) return;
 		sessionLifecycle.shutdown();
+		agentWorking = false;
 		try {
-			disposeFixedEditor(ctx);
-			if (isTuiContext(ctx)) removeFixedEditorProbe(ctx);
-			uninstallPrototypePatches();
-			stopSessionTimer();
+			stopClockTimer();
 			stopProjectRefresh();
+			uninstallPrototypePatches(isTuiContext(ctx) ? ctx : undefined);
 			requestFooterRender = undefined;
+			syncFooterAnimation = undefined;
 			getActiveExtensionStatuses = () => new Map();
 			if (isTuiContext(ctx)) {
 				ctx.ui.setFooter(undefined);
@@ -433,29 +505,24 @@ export default function (pi: ExtensionAPI) {
 					);
 				}
 			}
+		} finally {
 			wrappedEditorFactory = undefined;
 			installedEditorFactory = undefined;
 			editorInstallMode = "none";
 			footerInstalled = false;
 			editorInstalled = false;
 			activeTheme = undefined;
-		} finally {
+			activeCtx = undefined;
 			requestFooterRender = undefined;
 		}
-	};
-
-	const syncInteractiveState = (_event: unknown, ctx: ExtensionContext) => {
-		refreshInteractiveState(ctx);
-	};
-	const syncInteractiveAndProjectState = (_event: unknown, ctx: ExtensionContext) => {
-		refreshInteractiveState(ctx, true);
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
 		sessionLifecycle.start();
 		liveContext.clear();
+		agentWorking = false;
 		state.sessionStartEpoch = Date.now();
-		invalidateUsageTotalsCache();
+		invalidateSessionCaches();
 		lastProjectCwd = undefined;
 		installUi(ctx);
 		scheduleEditorReconciliation(ctx);
@@ -465,10 +532,10 @@ export default function (pi: ExtensionAPI) {
 		sessionLifecycle,
 		getConfig: getCurrentConfig,
 		setColorSources(patch: Partial<ColorSourcesConfig>) {
-			currentConfig = saveColorSourcesPatch(patch);
+			applyConfig(saveColorSourcesPatch(patch));
 		},
 		setUiFeatures(patch: Partial<UiFeaturesConfig>, ctx: ExtensionContext) {
-			currentConfig = saveUiFeaturesPatch(patch);
+			applyConfig(saveUiFeaturesPatch(patch));
 			const result = applyConfiguredUi(ctx);
 			return {
 				applied: !(patch.editor !== undefined && result.editorBlocked),
@@ -478,45 +545,37 @@ export default function (pi: ExtensionAPI) {
 			};
 		},
 		setFooterSegments(patch: Partial<FooterSegmentsConfig>) {
-			currentConfig = saveFooterSegmentsPatch(patch);
-			startSessionTimer();
+			applyConfig(saveFooterSegmentsPatch(patch));
 		},
 		setFooterFormat(value: string) {
-			currentConfig = saveFooterFormatPatch(value);
-			startSessionTimer();
+			applyConfig(saveFooterFormatPatch(value));
 		},
 		setIconMode(mode: IconMode) {
-			currentConfig = saveIconsModePatch(mode);
+			applyConfig(saveIconsModePatch(mode));
 		},
 		setContextStyle(style: ContextStyle) {
-			currentConfig = saveContextStylePatch(style);
+			applyConfig(saveContextStylePatch(style));
 		},
 		setSeparator(separator: SeparatorStyle) {
-			currentConfig = saveSeparatorPatch(separator);
+			applyConfig(saveSeparatorPatch(separator));
 		},
 		setPathDisplay(patch: Partial<PathDisplayConfig>) {
-			currentConfig = savePathDisplayPatch(patch);
+			applyConfig(savePathDisplayPatch(patch));
 		},
 		setGitBranch(patch: Partial<GitBranchConfig>) {
-			currentConfig = saveGitBranchPatch(patch);
+			applyConfig(saveGitBranchPatch(patch));
 		},
 		getActiveExtensionStatuses() {
 			return getActiveExtensionStatuses();
 		},
 		setExtensionStatusPlacement(key: string, placement: ExtensionStatusPlacement) {
-			currentConfig = saveExtensionStatusPlacement(key, placement);
+			applyConfig(saveExtensionStatusPlacement(key, placement));
 		},
 		setExtensionStatusColorMode(key: string, colorMode: ExtensionStatusColorMode) {
-			currentConfig = saveExtensionStatusColorMode(key, colorMode);
+			applyConfig(saveExtensionStatusColorMode(key, colorMode));
 		},
-		setFixedEditor(patch: Partial<FixedEditorConfig>, ctx: ExtensionContext) {
-			currentConfig = saveFixedEditorPatch(patch);
-			if (patch.enabled === true) {
-				installFixedEditorProbe(ctx, getCurrentConfig, sessionLifecycle);
-			} else if (patch.enabled === false) {
-				disposeFixedEditor(ctx);
-			}
-			refresh();
+		setAnimations(patch: Partial<AnimationsConfig>) {
+			applyConfig(saveAnimationsPatch(patch));
 		},
 		requestRender() {
 			refresh();
@@ -528,17 +587,27 @@ export default function (pi: ExtensionAPI) {
 		cleanupUi(ctx);
 	});
 
-	const syncInteractiveAndProjectStateWithUsage = (_event: unknown, ctx: ExtensionContext) => {
-		invalidateUsageTotalsCache();
+	const syncInteractiveState = (_event: unknown, ctx: ExtensionContext) => {
+		refreshInteractiveState(ctx);
+	};
+	const syncInteractiveAndProjectState = (_event: unknown, ctx: ExtensionContext) => {
+		refreshInteractiveState(ctx, true);
+	};
+	const syncAfterHistoryChange = (_event: unknown, ctx: ExtensionContext) => {
+		invalidateSessionCaches();
 		refreshInteractiveState(ctx, true);
 	};
 
 	pi.on("agent_start", (event, ctx) => {
 		liveContext.clear();
+		agentWorking = true;
+		syncFooterAnimation?.();
 		syncInteractiveState(event, ctx);
 	});
 	pi.on("agent_end", (event, ctx) => {
 		liveContext.clear();
+		agentWorking = false;
+		syncFooterAnimation?.();
 		syncInteractiveAndProjectState(event, ctx);
 	});
 	pi.on("model_select", (event, ctx) => {
@@ -558,7 +627,7 @@ export default function (pi: ExtensionAPI) {
 		) {
 			liveContext.clear();
 		}
-		syncInteractiveAndProjectStateWithUsage(event, ctx);
+		syncAfterHistoryChange(event, ctx);
 	});
 	pi.on("tool_execution_start", (event, ctx) => {
 		liveContext.clear();
@@ -567,10 +636,10 @@ export default function (pi: ExtensionAPI) {
 	pi.on("tool_execution_end", syncInteractiveAndProjectState);
 	pi.on("session_compact", (event, ctx) => {
 		liveContext.clear();
-		syncInteractiveAndProjectStateWithUsage(event, ctx);
+		syncAfterHistoryChange(event, ctx);
 	});
 	pi.on("session_tree", (event, ctx) => {
 		liveContext.clear();
-		syncInteractiveAndProjectStateWithUsage(event, ctx);
+		syncAfterHistoryChange(event, ctx);
 	});
 }

@@ -1,5 +1,4 @@
 import { homedir, hostname, userInfo } from "node:os";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type {
@@ -10,8 +9,9 @@ import type {
 	GitBranchMaxLength,
 	PathDisplayMode,
 } from "./config";
-import { renderMacaronGauge, type GaugeTier } from "./gradient";
+import { sanitizeDisplayText } from "./extension-status";
 import type { GitCommitInfo, GitMetricsInfo } from "./git";
+import { type GaugeTier, renderMacaronGauge } from "./gradient";
 import type { IconMode } from "./icons";
 import { resolveOsIcon, resolvePackageIcon, resolveRuntimeSymbol } from "./icons";
 import type { PackageVersionResult } from "./package-version";
@@ -82,29 +82,42 @@ export type UsageTotals = {
 
 export type ContextColorTier = "normal" | "warning" | "error";
 
-type SessionEntry = {
+/** Structural usage shape shared by Pi 0.87 → 0.99 (every field guarded). */
+type UsageLike = {
+	input?: unknown;
+	output?: unknown;
+	cacheRead?: unknown;
+	cacheWrite?: unknown;
+	cost?: { total?: unknown };
+};
+
+/** Structural session entry (assistant/toolResult messages, `usage`, compaction, branch_summary). */
+export type UsageSessionEntry = {
 	type?: string;
-	id?: string | number;
-	timestamp?: string | number;
-	message?: {
-		role?: string;
-		usage?: AssistantMessage["usage"];
-	};
+	usage?: UsageLike;
+	message?: { role?: string; usage?: UsageLike };
 };
 
-type UsageCacheEntry = {
-	key: string;
-	totals: UsageTotals;
+type SessionManagerLike = {
+	getEntries(): readonly UsageSessionEntry[];
+	getLeafId?(): string | null;
+	getSessionId?(): string;
+	/** Pi ≥ 0.99: O(1) entry count without copying the entry list. */
+	getEntryCount?(): number;
 };
 
-let usageTotalsCache: UsageCacheEntry | undefined;
-let usageTotalsComputeCount = 0;
+function num(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
 
 export function formatCount(value: number): string {
 	if (value < 1000) return value.toString();
-	if (value < 10_000) return `${(value / 1000).toFixed(1)}k`;
-	if (value < 1_000_000) return `${Math.round(value / 1000)}k`;
-	if (value < 10_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+	const thousandsTenths = Math.round(value / 100) / 10;
+	if (thousandsTenths < 10) return `${thousandsTenths.toFixed(1)}k`;
+	const thousands = Math.round(value / 1000);
+	if (thousands < 1000) return `${thousands}k`;
+	const millionsTenths = Math.round(value / 100_000) / 10;
+	if (millionsTenths < 10) return `${millionsTenths.toFixed(1)}M`;
 	return `${Math.round(value / 1_000_000)}M`;
 }
 
@@ -134,75 +147,110 @@ function calculateCacheHitRate(
 	return promptTokens > 0 ? (cacheRead / promptTokens) * 100 : undefined;
 }
 
-function entryIdentity(entry: SessionEntry | undefined): string {
-	if (!entry) return "";
-	const usage = entry.message?.usage;
-	const usageKey = usage
-		? `${usage.input ?? 0}:${usage.output ?? 0}:${usage.cacheRead ?? 0}:${usage.cacheWrite ?? 0}:${usage.cost?.total ?? 0}`
-		: "";
-	return `${entry.id ?? ""}|${entry.timestamp ?? ""}|${entry.type ?? ""}|${entry.message?.role ?? ""}|${usageKey}`;
+function addUsage(totals: { -readonly [K in keyof UsageTotals]: UsageTotals[K] }, usage: UsageLike) {
+	totals.input += num(usage.input);
+	totals.output += num(usage.output);
+	totals.cacheRead += num(usage.cacheRead);
+	totals.cacheWrite += num(usage.cacheWrite);
+	totals.cost += num(usage.cost?.total);
 }
 
-function buildUsageFingerprint(entries: readonly SessionEntry[]): string {
-	const first = entries[0];
-	const last = entries[entries.length - 1];
-	return `${entries.length}\0${entryIdentity(first)}\0${entryIdentity(last)}`;
-}
-
-function computeUsageTotals(entries: readonly SessionEntry[]): UsageTotals {
-	usageTotalsComputeCount += 1;
-	let input = 0;
-	let output = 0;
-	let cacheRead = 0;
-	let cacheWrite = 0;
-	let latestCacheHitRate: number | undefined;
-	let cost = 0;
-
-	for (const entry of entries) {
-		if (entry.type !== "message" || entry.message?.role !== "assistant") continue;
-		const usage = entry.message.usage;
-		const entryInput = usage?.input ?? 0;
-		const entryCacheRead = usage?.cacheRead ?? 0;
-		const entryCacheWrite = usage?.cacheWrite ?? 0;
-
-		input += entryInput;
-		output += usage?.output ?? 0;
-		cacheRead += entryCacheRead;
-		cacheWrite += entryCacheWrite;
-		cost += usage?.cost?.total ?? 0;
-		latestCacheHitRate = calculateCacheHitRate(entryInput, entryCacheRead, entryCacheWrite);
-	}
-
-	return Object.freeze({ input, output, cacheRead, cacheWrite, latestCacheHitRate, cost });
-}
-
-export function invalidateUsageTotalsCache(): void {
-	usageTotalsCache = undefined;
-}
-
-/** Test helper: number of full usage scans performed since process start / last reset. */
-export function __usageTotalsComputeCount(): number {
-	return usageTotalsComputeCount;
-}
-
-/** Test helper: reset memoization counters/cache. */
-export function __resetUsageTotalsCacheForTests(): void {
-	usageTotalsCache = undefined;
-	usageTotalsComputeCount = 0;
-}
-
-export function getUsageTotals(ctx: ExtensionContext): UsageTotals {
-	const sessionManager = ctx.sessionManager as {
-		getEntries?: () => SessionEntry[];
-		getBranch: () => SessionEntry[];
+/**
+ * Session-wide usage totals, mirroring Pi's own footer (0.99.1 `FooterComponent`):
+ * `usage` entries, assistant messages, tool results that carry usage, and
+ * compaction / branch-summary usage. Cache-hit rate follows the latest assistant turn.
+ */
+export function computeUsageTotals(entries: readonly UsageSessionEntry[]): UsageTotals {
+	const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 } as {
+		-readonly [K in keyof UsageTotals]: UsageTotals[K];
 	};
-	const entries = sessionManager.getEntries?.() ?? sessionManager.getBranch();
-	const key = buildUsageFingerprint(entries);
-	if (usageTotalsCache?.key === key) return usageTotalsCache.totals;
+	for (const entry of entries) {
+		if (entry.type === "usage") {
+			if (entry.usage) addUsage(totals, entry.usage);
+		} else if (entry.type === "message") {
+			const message = entry.message;
+			if (!message?.usage) continue;
+			if (message.role === "assistant") {
+				addUsage(totals, message.usage);
+				const usage = message.usage;
+				totals.latestCacheHitRate = calculateCacheHitRate(
+					num(usage.input),
+					num(usage.cacheRead),
+					num(usage.cacheWrite),
+				);
+			} else if (message.role === "toolResult") {
+				addUsage(totals, message.usage);
+			}
+		} else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
+			addUsage(totals, entry.usage);
+		}
+	}
+	return Object.freeze(totals);
+}
 
-	const totals = computeUsageTotals(entries);
-	usageTotalsCache = { key, totals };
-	return totals;
+/**
+ * O(1) identity of the session state: entries are append-only and every append
+ * moves the leaf (same invariant Pi's footer relies on). `undefined` = not cacheable.
+ */
+function sessionStateKey(sessionManager: SessionManagerLike): string | undefined {
+	if (typeof sessionManager.getLeafId !== "function") return undefined;
+	const count =
+		typeof sessionManager.getEntryCount === "function" ? sessionManager.getEntryCount() : "";
+	return `${sessionManager.getSessionId?.() ?? ""}\0${sessionManager.getLeafId() ?? ""}\0${count}`;
+}
+
+let usageTotalsCache: { key: string; totals: UsageTotals } | undefined;
+let contextUsageCache: { key: string; usage: ReturnType<ExtensionContext["getContextUsage"]> } | undefined;
+
+/** Drop cached usage/context results (call on events that may rewrite history). */
+export function invalidateSessionCaches(): void {
+	usageTotalsCache = undefined;
+	contextUsageCache = undefined;
+}
+
+const EMPTY_TOTALS: UsageTotals = Object.freeze({
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	cost: 0,
+});
+
+export function getUsageTotals(ctx: Pick<ExtensionContext, "sessionManager">): UsageTotals {
+	try {
+		const sessionManager = ctx.sessionManager as unknown as SessionManagerLike;
+		const key = sessionStateKey(sessionManager);
+		if (key !== undefined && usageTotalsCache?.key === key) return usageTotalsCache.totals;
+		const totals = computeUsageTotals(sessionManager.getEntries());
+		usageTotalsCache = key === undefined ? undefined : { key, totals };
+		return totals;
+	} catch {
+		// Stale context after a session switch: render zeros rather than crash the footer.
+		return usageTotalsCache?.totals ?? EMPTY_TOTALS;
+	}
+}
+
+/**
+ * `ctx.getContextUsage()` scans the session (O(n)); the footer renders on every
+ * TUI frame, so memoize on session state + model like Pi's own footer does.
+ */
+export function getCachedContextUsage(
+	ctx: Pick<ExtensionContext, "sessionManager" | "model" | "getContextUsage">,
+): ReturnType<ExtensionContext["getContextUsage"]> {
+	try {
+		const stateKey = sessionStateKey(ctx.sessionManager as unknown as SessionManagerLike);
+		const model = ctx.model;
+		const key =
+			stateKey === undefined
+				? undefined
+				: `${stateKey}\0${model?.provider ?? ""}/${model?.id ?? ""}/${model?.contextWindow ?? ""}`;
+		if (key !== undefined && contextUsageCache?.key === key) return contextUsageCache.usage;
+		const usage = ctx.getContextUsage();
+		contextUsageCache = key === undefined ? undefined : { key, usage };
+		return usage;
+	} catch {
+		return undefined;
+	}
 }
 
 export function buildTokenLabel(totals: UsageTotals, cacheHitIcon = "󰆼"): string {
@@ -242,7 +290,7 @@ export function contextColorTier(
 	return "normal";
 }
 
-export function buildContextGauge(
+function buildContextGauge(
 	percent: number,
 	width = 10,
 	ascii = false,
@@ -254,11 +302,11 @@ export function buildContextGauge(
 		const filled = Math.round((clamped / 100) * width);
 		return `${"#".repeat(filled)}${"-".repeat(Math.max(0, width - filled))}`;
 	}
-	// Strip frame — caller wraps with [] for text+gauge / gauge styles.
-	return renderMacaronGauge(percent, width, { phase, frame: false, tier });
+	// Caller wraps with [] for text+gauge / gauge styles.
+	return renderMacaronGauge(percent, width, { phase, tier });
 }
 
-export function formatContextPercentLabel(
+function formatContextPercentLabel(
 	percent: number | null | undefined,
 	contextWindow: number | undefined,
 ): string {
@@ -300,12 +348,6 @@ export function buildContextDisplayLabel(options: {
 	if (style === "gauge") return `[${gauge}]`;
 	if (style === "text+gauge") return `[${gauge}] ${text}`;
 	return text;
-}
-
-export function buildContextLabel(ctx: ExtensionContext): string {
-	const usage = ctx.getContextUsage();
-	const contextWindow = ctx.model?.contextWindow ?? usage?.contextWindow;
-	return formatContextPercentLabel(usage?.percent, contextWindow);
 }
 
 export function formatRuntimeSegment(
@@ -391,7 +433,7 @@ function applyPathDepth(path: string, depth: number): string {
 
 export function formatCwdLabel(cwd: string, cwdIcon: string, options?: FormatCwdOptions): string {
 	const mode = options?.mode ?? "basename";
-	const normalized = normalizeDisplayPath(cwd);
+	const normalized = normalizeDisplayPath(sanitizeDisplayText(cwd));
 	let pathText: string;
 	if (mode === "full") {
 		const home =
@@ -408,7 +450,7 @@ export function formatCwdLabel(cwd: string, cwdIcon: string, options?: FormatCwd
 		pathText = "/";
 	} else {
 		const parts = normalized.split("/").filter(Boolean);
-		pathText = parts[parts.length - 1] ?? cwd;
+		pathText = parts[parts.length - 1] ?? normalized;
 	}
 	return cwdIcon ? `${cwdIcon} ${pathText}` : pathText;
 }
@@ -425,16 +467,21 @@ export function formatGitBranchText(
 	return stripAnsi(truncateToWidth(branch, maxLength, "…"));
 }
 
+let userHostLabel: string | undefined;
+
+/** `user@host`, resolved once per process (userInfo() hits the passwd database). */
 export function formatUsernameHostLabel(icon: string): string {
-	try {
-		const user = userInfo().username;
-		const host = hostname();
-		if (!user || !host) return "";
-		const label = `${user}@${host}`;
-		return icon ? `${icon} ${label}` : label;
-	} catch {
-		return "";
+	if (userHostLabel === undefined) {
+		try {
+			const user = sanitizeDisplayText(userInfo().username);
+			const host = sanitizeDisplayText(hostname());
+			userHostLabel = user && host ? `${user}@${host}` : "";
+		} catch {
+			userHostLabel = "";
+		}
 	}
+	if (!userHostLabel) return "";
+	return icon ? `${icon} ${userHostLabel}` : userHostLabel;
 }
 
 export function formatTimeLabel(icon: string): string {

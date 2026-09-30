@@ -35,17 +35,6 @@ export class SessionLifecycle {
 		};
 	}
 
-	queueMicrotask(callback: () => void): () => void {
-		let canceled = !this.active;
-		const generation = this.generation;
-		queueMicrotask(() => {
-			if (!canceled && this.isCurrent(generation)) callback();
-		});
-		return () => {
-			canceled = true;
-		};
-	}
-
 	shutdown(): void {
 		if (!this.active && this.timeouts.size === 0) return;
 		this.active = false;

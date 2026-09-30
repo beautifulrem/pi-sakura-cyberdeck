@@ -1,12 +1,36 @@
-import type { GitReadResult } from "./git";
+import { sanitizeDisplayText } from "./extension-status";
+import type { GitReadResult, GitStatusSummary } from "./git";
 import { emptyGitStatus } from "./git";
 import type { PackageVersionReadResult } from "./package-version";
 import type { RuntimeReadResult } from "./runtime";
 import type { FooterState } from "./state";
 
+function sanitizeOptional(value: string | undefined): string | undefined {
+	if (value === undefined) return undefined;
+	return sanitizeDisplayText(value) || undefined;
+}
+
+/** Repository-controlled strings (branch, tag) must never carry terminal escapes. */
+function sanitizeGitStatus(status: GitStatusSummary): GitStatusSummary {
+	return {
+		...status,
+		branch: sanitizeOptional(status.branch),
+		commit: status.commit
+			? {
+					...status.commit,
+					oid: status.commit.oid && /^[0-9a-f]+$/i.test(status.commit.oid) ? status.commit.oid : null,
+					tag: status.commit.tag ? (sanitizeDisplayText(status.commit.tag) || null) : null,
+				}
+			: undefined,
+		gitUnavailable: false,
+	};
+}
+
 /**
- * Apply a project refresh (git + runtime) onto footer state, preserving
- * last-good values on transient errors and clearing on cwd change / not-a-repo.
+ * Apply a project refresh onto footer state. Probes that were skipped are
+ * passed as `undefined` and leave their fields untouched (their segments are
+ * hidden). On cwd change everything is cleared first; git errors mark the
+ * status as unavailable instead of freezing stale counts.
  *
  * Returns the cwd to store as `previousCwd` for the next refresh.
  */
@@ -15,8 +39,8 @@ export function applyProjectRefreshToState(
 	args: {
 		cwd: string;
 		previousCwd: string | undefined;
-		git: GitReadResult;
-		runtime: RuntimeReadResult;
+		git?: GitReadResult;
+		runtime?: RuntimeReadResult;
 		packageVersion?: PackageVersionReadResult;
 	},
 ): string {
@@ -28,32 +52,29 @@ export function applyProjectRefreshToState(
 		state.packageVersion = undefined;
 	}
 
-	if (args.git.kind === "ok") {
-		Object.assign(state, args.git.status);
-	} else if (args.git.kind === "not_a_repo") {
+	if (args.git?.kind === "ok") {
+		Object.assign(state, sanitizeGitStatus(args.git.status));
+	} else if (args.git?.kind === "not_a_repo") {
 		Object.assign(state, emptyGitStatus());
+	} else if (args.git?.kind === "error") {
+		// Keep the branch name (still meaningful) but never show stale counts as current.
+		const branch = state.branch;
+		Object.assign(state, emptyGitStatus(), { branch, gitUnavailable: true });
 	}
-	// kind === "error": keep previous git fields (unless cwdChanged already cleared)
 
-	if (args.runtime.kind === "ok") {
-		state.runtime = args.runtime.runtime;
-	} else if (cwdChanged && args.runtime.kind === "error") {
-		// Already cleared above; keep undefined.
-		state.runtime = undefined;
+	if (args.runtime?.kind === "ok") {
+		const runtime = args.runtime.runtime;
+		state.runtime = runtime
+			? { ...runtime, version: sanitizeOptional(runtime.version) }
+			: undefined;
 	}
-	// error + same cwd: keep previous runtime
+	// error: keep previous runtime (already cleared above when cwd changed)
 
-	if (args.packageVersion !== undefined) {
-		if (args.packageVersion.kind === "ok") {
-			// `null` means "no manifest in this cwd"; clear so the segment disappears
-			// even on the same cwd when the user removes their manifest.
-			state.packageVersion = args.packageVersion.result ?? undefined;
-		} else if (!cwdChanged) {
-			// error + same cwd: keep previous packageVersion (last-good semantics)
-		} else {
-			state.packageVersion = undefined;
-		}
+	if (args.packageVersion?.kind === "ok") {
+		// `null` means "no manifest in this cwd"; clear so the segment disappears.
+		state.packageVersion = args.packageVersion.result ?? undefined;
 	}
+	// error: keep previous packageVersion (last-good semantics)
 
 	return args.cwd;
 }
