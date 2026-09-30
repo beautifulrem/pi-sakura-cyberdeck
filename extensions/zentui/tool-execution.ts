@@ -1,267 +1,241 @@
-import {
-	BashExecutionComponent,
-	type Theme,
-	ToolExecutionComponent,
-} from "@earendil-works/pi-coding-agent";
-import {
-	beautifyToolBody,
-	compactToolBody,
-	bottomBorder,
-	fitBorderLabel,
-	formatStats,
-	fg,
-	stripAnsi,
-} from "./tool-body-polish";
-import { truncateToWidth } from "@earendil-works/pi-tui";
-import {
-	renderBoxedLine,
-	renderSakuraFrameGradient,
-	renderSakuraGradient,
-	renderSakuraSolid,
-	rgbForeground,
-} from "./gradient";
+import { type Theme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import { getColorMode, paintFg, type RGB } from "../shared/color";
+import { renderSakuraFrameGradient } from "./gradient";
 import { installPrototypePatch } from "./prototype-patch-registry";
 
-const SETTLED_CACHE_MAX_LINES = 80;
-const SETTLED_CACHE_MAX_CHARS = 64 * 1024;
-
-// Soft mint for bash rails (truecolor, theme-independent).
-const MINT = [174, 229, 197] as const;
+/**
+ * Tool card chrome: sakura gradient title frame + status rail around Pi's own tool rendering.
+ *
+ * Body lines are Pi's render output at `width - 3` columns, passed through byte-for-byte: the
+ * pack never rewrites, strips or truncates tool output. Tools that draw their own shell
+ * (`renderShell: "self"`, e.g. edit), image results, and hidden cards stay fully stock.
+ */
 
 type Cleanup = () => void;
+type ToolStatus = "running" | "ok" | "error";
+
+/** Private ToolExecutionComponent fields read defensively (present in Pi 0.87.1 and 0.99.1). */
 type ToolExecutionRuntime = {
-	isPartial?: boolean;
-	result?: {
-		isError?: boolean;
-		content?: Array<{ type?: string }>;
-	};
-	toolName?: string;
-	hideComponent?: boolean;
-	expanded?: boolean;
-	showImages?: boolean;
-	getRenderShell?: () => "default" | "self";
+	isPartial?: unknown;
+	result?: { isError?: unknown; content?: unknown };
+	toolName?: unknown;
+	expanded?: unknown;
+	hideComponent?: unknown;
+	getRenderShell?: unknown;
 };
 
-type SettledRender = {
+type MouseEventLike = { x: number; y: number; width: number; height: number };
+
+type CardRender = {
 	width: number;
-	result: ToolExecutionRuntime["result"];
+	innerWidth: number;
+	status: ToolStatus;
 	expanded: boolean;
-	showImages: boolean;
+	name: string;
+	colorMode: string;
+	/** Number of leading inner lines kept outside the frame (Pi's spacer row). */
+	prefix: number;
+	inner: readonly string[];
 	lines: string[];
 };
 
-function isBlank(line: string): boolean {
-	return stripAnsi(line).trim().length === 0;
+// Theme-independent status hues (sakura-macaron.json roles): sky = running, mint = ok, coral = error.
+const STATUS_RGB: Record<ToolStatus, RGB> = {
+	running: [159, 211, 242],
+	ok: [174, 229, 197],
+	error: [255, 143, 163],
+};
+const FRAME_RGB: RGB = [242, 167, 198];
+const LEFT_RAIL = "┃ ";
+const RIGHT_RAIL = "│";
+const LEFT_COLUMNS = 2; // visible width of LEFT_RAIL
+const RAIL_COLUMNS = 3; // visible width of LEFT_RAIL + RIGHT_RAIL
+const MIN_WIDTH = 12;
+
+function toolStatus(runtime: ToolExecutionRuntime): ToolStatus | undefined {
+	if (typeof runtime.isPartial !== "boolean") return undefined; // unknown shape: stay stock
+	if (runtime.isPartial) return "running";
+	return runtime.result?.isError === true ? "error" : "ok";
 }
 
-function containsTerminalImage(lines: readonly string[]): boolean {
-	return lines.some((line) => line.includes("\x1b_G") || line.includes("\x1b]1337;File="));
+function toolLabelName(runtime: ToolExecutionRuntime): string {
+	const raw = typeof runtime.toolName === "string" && runtime.toolName ? runtime.toolName : "tool";
+	// Chrome only (never body content): drop control characters so the frame cannot be corrupted.
+	return raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").replaceAll("_", " ").toUpperCase();
 }
 
-function containsResultImage(runtime: ToolExecutionRuntime): boolean {
-	return runtime.result?.content?.some((item) => item.type === "image") ?? false;
+function hasImageResult(runtime: ToolExecutionRuntime): boolean {
+	const content = runtime.result?.content;
+	if (!Array.isArray(content)) return false;
+	return content.some((item) => (item as { type?: unknown } | null)?.type === "image");
 }
 
-function isCacheableSettledRender(lines: readonly string[]): boolean {
-	if (lines.length > SETTLED_CACHE_MAX_LINES) return false;
-	let chars = 0;
-	for (const line of lines) {
-		chars += line.length;
-		if (chars > SETTLED_CACHE_MAX_CHARS) return false;
+/** Stock rendering for shells we do not frame (self-rendered tools, images, hidden cards). */
+function isFrameable(runtime: ToolExecutionRuntime): boolean {
+	if (runtime.hideComponent === true) return false;
+	if (typeof runtime.getRenderShell === "function") {
+		try {
+			if ((runtime.getRenderShell as () => unknown).call(runtime) === "self") return false;
+		} catch {
+			return false;
+		}
 	}
+	return !hasImageResult(runtime);
+}
+
+function statusText(status: ToolStatus, name: string): string {
+	if (status === "running") return `◆ ${name} · RUNNING`;
+	if (status === "error") return `× ${name} · FAILED`;
+	return `✓ ${name}`;
+}
+
+/** `╭─ label ───╮` fitted to exactly `width` cells (label clipped per character, no ellipsis). */
+export function frameTop(label: string, width: number): string {
+	if (width <= 1) return width === 1 ? "╭" : "";
+	const inner = width - 2;
+	let used = 0;
+	let text = "";
+	for (const char of `─ ${label} `) {
+		const w = visibleWidth(char);
+		if (used + w > inner) break;
+		text += char;
+		used += w;
+	}
+	return `╭${text}${"─".repeat(inner - used)}╮`;
+}
+
+export function frameBottom(width: number): string {
+	if (width <= 1) return width === 1 ? "╰" : "";
+	return `╰${"─".repeat(width - 2)}╯`;
+}
+
+function sameLines(a: readonly string[], b: readonly string[]): boolean {
+	if (a.length !== b.length) return false;
+	// Pi's Box/Text caches return the same string objects every frame, so this is an identity scan.
+	for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
 	return true;
 }
 
-function statusLabel(runtime: ToolExecutionRuntime, statsText: string): string {
-	const name = (runtime.toolName || "tool").replaceAll("_", " ").toUpperCase();
-	const deltaPart = statsText ? ` · ${statsText}` : "";
-	if (runtime.isPartial !== false) return `◆ ${name}${deltaPart} · RUNNING`;
-	return runtime.result?.isError
-		? `× ${name}${deltaPart} · FAILED`
-		: `✓ ${name}${deltaPart} · COMPLETE`;
-}
-
-// Status rail = theme semantic tokens from sakura-macaron.json (pastel, not traffic lights).
-// Design systems (MUI/Paste/Chakra) keep success/error/info roles; pastel decks soft-tint them.
-// This pack: success→mint, error→coral, info→sky (already in theme).
-const RAIL_WORKING: [number, number, number] = [159, 211, 242]; // sky  #9FD3F2 — in flight
-const RAIL_SUCCESS: [number, number, number] = [174, 229, 197]; // mint  #AEE5C5 — theme success
-const RAIL_ERROR: [number, number, number] = [255, 143, 163];   // coral #FF8FA3 — theme error (rose, not pure red)
-
-function leftRailFor(runtime: ToolExecutionRuntime, _theme: Theme): string {
-	const pending = runtime.isPartial !== false;
-	// Thick left bar: sky / mint / coral — Grok-style status, macaron hues.
-	if (pending) return rgbForeground(RAIL_WORKING, "┃ ");
-	if (runtime.result?.isError) return rgbForeground(RAIL_ERROR, "┃ ");
-	return rgbForeground(RAIL_SUCCESS, "┃ ");
+function buildCard(
+	inner: readonly string[],
+	width: number,
+	status: ToolStatus,
+	name: string,
+): { lines: string[]; prefix: number } {
+	const prefix = inner[0] === "" ? 1 : 0; // Pi's Spacer(1) row stays above the frame
+	const left = paintFg(STATUS_RGB[status], LEFT_RAIL);
+	const right = paintFg(FRAME_RGB, RIGHT_RAIL);
+	const lines: string[] = inner.slice(0, prefix);
+	lines.push(renderSakuraFrameGradient(frameTop(statusText(status, name), width)));
+	for (let i = prefix; i < inner.length; i++) lines.push(`${left}${inner[i]}${right}`);
+	lines.push(renderSakuraFrameGradient(frameBottom(width)));
+	return { lines, prefix };
 }
 
 /**
- * Compact sakura status rail + modern body polish for tool rows.
- * Settled frames are cached so animation redraws stay cheap.
+ * Map a mouse event on the framed card back to Pi's own layout (inner width, rows without the
+ * frame). Returns undefined for frame/rail cells.
  */
-export function installToolExecutionStyle(getTheme: () => Theme | undefined): Cleanup {
-	const settledRenders = new WeakMap<object, SettledRender>();
+export function mapCardMouseEvent<T extends MouseEventLike>(event: T, card: CardRender): T | undefined {
+	const { prefix, inner } = card;
+	const bodyEnd = prefix + 1 + (inner.length - prefix); // exclusive row index of the body
+	let y: number;
+	if (event.y < prefix) y = event.y;
+	else if (event.y > prefix && event.y < bodyEnd) y = event.y - 1;
+	else return undefined;
+	const x = event.x - LEFT_COLUMNS;
+	if (x < 0 || x >= card.innerWidth) return undefined; // rail cells
+	return { ...event, y, x, width: card.innerWidth, height: inner.length };
+}
 
-	const cleanupRenderPatch = installPrototypePatch(
+export function installToolExecutionStyle(_getTheme?: () => Theme | undefined): Cleanup {
+	const cards = new WeakMap<object, CardRender>();
+
+	const cleanupRender = installPrototypePatch(
 		ToolExecutionComponent.prototype,
 		"render",
 		"tool-execution-render",
 		({ predecessor, receiver, args }) => {
 			const width = args[0];
 			const runtime = receiver as ToolExecutionRuntime;
-			if (
-				typeof width === "number" &&
-				runtime.isPartial === false &&
-				!runtime.hideComponent &&
-				!containsResultImage(runtime)
-			) {
-				const cached = settledRenders.get(receiver as object);
-				if (
-					cached?.width === width &&
-					cached.result === runtime.result &&
-					cached.expanded === Boolean(runtime.expanded) &&
-					cached.showImages === Boolean(runtime.showImages)
-				) {
-					return cached.lines;
-				}
-			}
-
-			const rendered = Reflect.apply(predecessor, receiver, args);
-			if (!Array.isArray(rendered) || !rendered.every((line) => typeof line === "string")) {
-				return rendered;
-			}
-			const lines = rendered as string[];
+			const status = toolStatus(runtime);
 			if (
 				typeof width !== "number" ||
-				width <= 2 ||
-				lines.length === 0 ||
-				runtime.hideComponent ||
-				containsTerminalImage(lines)
+				width < MIN_WIDTH ||
+				status === undefined ||
+				!isFrameable(runtime)
 			) {
-				return lines;
-			}
-			// Note: also polish renderShell:"self" tools (edit/bash) — strip their full-width
-			// Box padding and re-frame so we never inherit right-edge "..." junk.
-
-			const theme = getTheme();
-			if (!theme) return lines;
-			const pending = runtime.isPartial !== false;
-
-			const prefix: string[] = [];
-			const body = [...lines];
-			if (body[0] !== undefined && isBlank(body[0])) {
-				const blank = body.shift();
-				if (blank !== undefined) prefix.push(blank);
+				cards.delete(receiver as object);
+				return Reflect.apply(predecessor, receiver, args);
 			}
 
-			const polished = beautifyToolBody(body, theme);
-			const bodyLines = compactToolBody(polished.lines, {
-				expanded: Boolean(runtime.expanded),
-				theme,
+			const innerWidth = width - RAIL_COLUMNS;
+			const inner = Reflect.apply(predecessor, receiver, [innerWidth, ...args.slice(1)]);
+			if (!Array.isArray(inner) || inner.length === 0) {
+				cards.delete(receiver as object);
+				return inner;
+			}
+
+			const lines = inner as string[];
+			const expanded = runtime.expanded === true;
+			const name = toolLabelName(runtime);
+			const colorMode = getColorMode();
+			const cached = cards.get(receiver as object);
+			if (
+				cached &&
+				cached.width === width &&
+				cached.status === status &&
+				cached.expanded === expanded &&
+				cached.name === name &&
+				cached.colorMode === colorMode &&
+				sameLines(cached.inner, lines)
+			) {
+				return cached.lines;
+			}
+
+			const card = buildCard(lines, width, status, name);
+			cards.set(receiver as object, {
+				width,
+				innerWidth,
+				status,
+				expanded,
+				name,
+				colorMode,
+				prefix: card.prefix,
+				inner: lines,
+				lines: card.lines,
 			});
-			const statsText = formatStats(polished.stats);
-			const label = fitBorderLabel(statusLabel(runtime, statsText), width);
-			const leftRail = leftRailFor(runtime, theme);
-			const rightRail = renderSakuraSolid("│"); // single cell — no leading space (was " │", ate width)
-			// Fit chrome to exact width without ellipsis.
-			const top = truncateToWidth(renderSakuraFrameGradient(label), width, "");
-			const bottom = truncateToWidth(renderSakuraFrameGradient(bottomBorder(width)), width, "");
-			const boxed = [
-				...prefix,
-				top,
-				...bodyLines.map((line) => renderBoxedLine(line, width, leftRail, rightRail)),
-				bottom,
-			];
-			if (!pending && !containsResultImage(runtime) && isCacheableSettledRender(boxed)) {
-				settledRenders.set(receiver as object, {
-					width,
-					result: runtime.result,
-					expanded: Boolean(runtime.expanded),
-					showImages: Boolean(runtime.showImages),
-					lines: boxed,
-				});
-			}
-			return boxed;
+			return card.lines;
 		},
 	);
 
-	const cleanupInvalidatePatch = installPrototypePatch(
+	// Fullscreen click-to-expand: Pi hit-tests with its own row/column layout, so translate
+	// events from the framed card back to it (skip the title row, strip the rail columns).
+	const cleanupMouse = installPrototypePatch(
 		ToolExecutionComponent.prototype,
-		"invalidate",
-		"tool-execution-invalidate",
+		"handleMouse",
+		"tool-execution-mouse",
 		({ predecessor, receiver, args }) => {
-			settledRenders.delete(receiver as object);
-			return Reflect.apply(predecessor, receiver, args);
-		},
-	);
-
-	// Bash uses its own component — gradient the chrome, keep streaming body.
-	const cleanupBashRender = installPrototypePatch(
-		BashExecutionComponent.prototype,
-		"render",
-		"bash-execution-render",
-		({ predecessor, receiver, args }) => {
-			const width = args[0];
-			const rendered = Reflect.apply(predecessor, receiver, args);
-			if (!Array.isArray(rendered) || !rendered.every((line) => typeof line === "string")) {
-				return rendered;
+			const event = args[0] as MouseEventLike | undefined;
+			const card = cards.get(receiver as object);
+			if (
+				!card ||
+				!event ||
+				typeof event.x !== "number" ||
+				typeof event.y !== "number" ||
+				event.width !== card.width
+			) {
+				return Reflect.apply(predecessor, receiver, args);
 			}
-			const lines = rendered as string[];
-			if (typeof width !== "number" || width <= 2 || lines.length === 0) return lines;
-
-			const plains = lines.map(stripAnsi);
-			const isRunning = plains.some((p) => p.includes("Running..."));
-			const out: string[] = [];
-
-			for (let i = 0; i < lines.length; i++) {
-				const line = lines[i] ?? "";
-				const plain = plains[i] ?? "";
-				const trimmed = plain.trim();
-
-				// Top / bottom DynamicBorder → sakura gradient frame.
-				if (/^[╭┌╔].*[╮┐╗]$/.test(trimmed) || /^[─═]{3,}$/.test(trimmed)) {
-					const label = isRunning ? "◆ BASH · RUNNING" : "✓ BASH · COMPLETE";
-					out.push(renderSakuraFrameGradient(fitBorderLabel(label, width)));
-					continue;
-				}
-				if (/^[╰└╚].*[╯┘╝]$/.test(trimmed)) {
-					out.push(renderSakuraFrameGradient(bottomBorder(width)));
-					continue;
-				}
-
-				// Command header: `$ cmd` → mint prompt.
-				const cmd = trimmed.match(/^\$\s+(.+)$/);
-				if (cmd) {
-					out.push(`${fg(MINT, "❯")} ${fg([159, 211, 242], cmd[1] ?? "")}`);
-					continue;
-				}
-
-				out.push(line);
-			}
-
-			// Cap bash stream paint when collapsed (Pi expanded flag not on BashExecution;
-			// keep last N lines so live tail still useful).
-			const BASH_COLLAPSED = 16;
-			if (out.length > BASH_COLLAPSED + 4) {
-				const head = out.slice(0, 3); // borders/header-ish
-				const tail = out.slice(-BASH_COLLAPSED);
-				const more = out.length - head.length - tail.length;
-				if (more > 0) {
-					return [
-						...head,
-						fg([113, 104, 121], `… +${more} lines`),
-						...tail,
-					];
-				}
-			}
-			return out;
+			const mapped = mapCardMouseEvent(event, card);
+			if (!mapped) return undefined;
+			return Reflect.apply(predecessor, receiver, [mapped, ...args.slice(1)]);
 		},
 	);
 
 	return () => {
-		cleanupBashRender();
-		cleanupInvalidatePatch();
-		cleanupRenderPatch();
+		cleanupMouse();
+		cleanupRender();
 	};
 }

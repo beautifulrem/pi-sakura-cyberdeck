@@ -1,17 +1,20 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { fgAnsi, getColorMode, syncColorMode, type RGB } from "../shared/color";
 
-const RESET = "\x1b[0m";
-const BOLD = "\x1b[1m";
-
-type RGB = readonly [number, number, number];
-
-function rgb([r, g, b]: RGB, text: string, bold = false): string {
-  return `${bold ? BOLD : ""}\x1b[38;2;${r};${g};${b}m${text}${RESET}`;
-}
+const SAKURA: RGB = [242, 167, 198];
+const PEACH: RGB = [246, 188, 154];
+const LAVENDER: RGB = [199, 184, 245];
+const SKY: RGB = [159, 211, 242];
+const LABEL = "◈  SAKURA CYBERDECK  ◈";
+/** Fixed blank rows above the artwork (independent of terminal height). */
+export const TOP_PADDING = 1;
 
 function gradient(text: string, from: RGB, to: RGB, bold = false): string {
+  if (getColorMode() === "none") return text;
   const chars = [...text];
   const span = Math.max(1, chars.length - 1);
+  const open = bold ? "\x1b[1m" : "";
   return chars.map((char, index) => {
     if (char === " ") return char;
     const t = index / span;
@@ -20,7 +23,7 @@ function gradient(text: string, from: RGB, to: RGB, bold = false): string {
       Math.round(from[1] + (to[1] - from[1]) * t),
       Math.round(from[2] + (to[2] - from[2]) * t),
     ];
-    return rgb(color, char, bold);
+    return `${open}${fgAnsi(color)}${char}\x1b[0m`;
   }).join("");
 }
 
@@ -36,65 +39,65 @@ const ANIME_ART = [
   "⠀⠀⠀⠀⠀⠀⠛⢷⣜⢷⡌⠻⣿⣿⣦⣝⣻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣯⣹⣷⣦⣹⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⠉⠃⠀",
 ] as const;
 
-function getAvailableRows(tui: unknown): number {
-  try {
-    const terminal = (tui as { terminal?: { rows?: unknown } }).terminal;
-    const rows = terminal?.rows;
-    return typeof rows === "number" && Number.isFinite(rows) ? Math.max(0, Math.floor(rows)) : 0;
-  } catch {
-    return 0;
-  }
+const ART_WIDTH = Math.max(...ANIME_ART.map((line) => [...line].length));
+
+/** Centered left padding with an optical nudge, never pushing content past `width`. */
+function centerPad(width: number, contentWidth: number, nudge = 0): string {
+  const pad = Math.floor((width - contentWidth) / 2) + nudge;
+  return " ".repeat(Math.max(0, Math.min(width - contentWidth, pad)));
 }
 
-function renderHeader(width: number, availableRows = 0): string[] {
-  if (width <= 0) return [];
+/** Header lines; every line fits within `width` columns and the height never depends on the terminal. */
+export function renderHeader(width: number): string[] {
+  const w = Math.floor(width);
+  if (!Number.isFinite(w) || w <= 0) return [];
 
-  const sakura: RGB = [242, 167, 198];
-  const peach: RGB = [252, 201, 185];
-  const lavender: RGB = [199, 184, 245];
-  const sky: RGB = [159, 211, 242];
-  const telemetry = "◈  SAKURA CYBERDECK  ◈";
-  const artWidth = Math.max(...ANIME_ART.map((line) => [...line].length));
-  const visibleArtWidth = Math.min(width, artWidth);
-  const artPad = " ".repeat(Math.max(0, Math.floor((width - visibleArtWidth) / 2) - 2));
+  const artWidth = Math.min(w, ART_WIDTH);
+  const artPad = centerPad(w, artWidth, -2);
+  // Truncate after coloring: pi-tui's truncateToWidth is ANSI-aware and wide-char safe.
+  const art = ANIME_ART.map((line) => `${artPad}${truncateToWidth(gradient(line, SAKURA, SKY), artWidth, "")}`);
+
   // Keep the divider visually subordinate: inset it symmetrically from the artwork.
-  const railInset = visibleArtWidth >= 8 ? Math.max(2, Math.round(visibleArtWidth * 0.15)) : 0;
-  const railWidth = Math.max(1, visibleArtWidth - railInset * 2);
-  const rail = "━".repeat(railWidth);
-  const railPad = " ".repeat(Math.max(0, Math.min(width - railWidth, Math.floor((width - railWidth) / 2) + 1)));
-  const visibleTelemetry = [...telemetry].slice(0, width).join("");
-  const telemetryWidth = [...visibleTelemetry].length;
-  const telemetryPad = " ".repeat(Math.max(0, Math.min(width - telemetryWidth, Math.floor((width - telemetryWidth) / 2) + 1)));
+  const railInset = artWidth >= 8 ? Math.max(2, Math.round(artWidth * 0.15)) : 0;
+  const railWidth = Math.max(1, artWidth - railInset * 2);
+  const rail = `${centerPad(w, railWidth, 1)}${gradient("━".repeat(railWidth), SAKURA, SKY)}`;
 
-  const art = ANIME_ART.map((line) => {
-    const clipped = [...line].slice(0, visibleArtWidth).join("");
-    return `${artPad}${gradient(clipped, sakura, sky)}`;
-  });
+  const label = truncateToWidth(gradient(LABEL, LAVENDER, PEACH, true), w, "…");
+  const labelLine = `${centerPad(w, visibleWidth(label), 1)}${label}`;
 
-  const visualHeight = ANIME_ART.length + 3; // artwork + gap + divider + label
-  const extraTopPadding = Math.max(0, Math.floor((availableRows - visualHeight) / 2) - 1);
+  return [...Array<string>(TOP_PADDING).fill(""), ...art, "", rail, labelLine, ""];
+}
 
-  return [
-    ...Array(extraTopPadding).fill(""),
-    "",
-    ...art,
-    "",
-    `${railPad}${gradient(rail, sakura, sky)}`,
-    `${telemetryPad}${gradient(visibleTelemetry, lavender, peach, true)}`,
-    "",
-  ];
+function isInteractiveTui(ctx: Pick<ExtensionContext, "mode" | "hasUI">): boolean {
+  return typeof ctx.mode === "string" ? ctx.mode === "tui" : ctx.hasUI === true;
 }
 
 export default function sakuraCyberdeckHeader(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
-    if (!ctx.hasUI) return;
-    ctx.ui.setHeader((tui) => ({
-      render: (width) => renderHeader(width, getAvailableRows(tui)),
-      invalidate() {},
+    if (!isInteractiveTui(ctx)) return;
+    syncColorMode(ctx.ui.theme);
+    let cachedWidth = -1;
+    let cachedLines: string[] = [];
+    ctx.ui.setHeader(() => ({
+      render(width: number): string[] {
+        if (width !== cachedWidth) {
+          cachedLines = renderHeader(width);
+          cachedWidth = width;
+        }
+        return cachedLines;
+      },
+      invalidate() {
+        cachedWidth = -1;
+      },
     }));
   });
 
   pi.on("session_shutdown", (_event, ctx) => {
-    if (ctx.hasUI) ctx.ui.setHeader(undefined);
+    if (!isInteractiveTui(ctx)) return;
+    try {
+      ctx.ui.setHeader(undefined);
+    } catch {
+      // UI may already be disposed.
+    }
   });
 }
