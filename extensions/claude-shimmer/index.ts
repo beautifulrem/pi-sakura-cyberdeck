@@ -1,157 +1,108 @@
 /**
- * Sakura-macaron Claude-style spinner for pi.
+ * Sakura-macaron Claude-style working spinner for Pi (interactive TUI only).
  *
- * Same state machine as pi-claude-shimmer, recolored for sakura-macaron:
- * - Verb shimmer sweeps sakura → peach → lavender → sky highlight
- * - Thinking glow breathes lavender ↔ petal white
- * - Stall fades toward coral; tools flash mint/sakura
- * - Whimsical verbs lean "atelier / confection" (OpenCode + Claude vibe)
+ * Fork of pi-claude-shimmer, recolored for sakura-macaron:
+ * - One verb per agent run, swept by a soft white highlight over sakura → sky stops
+ * - Thinking: the effort tag breathes between its tier color and petal white
+ * - Stall: after ~3s without stream updates the verb fades toward coral
+ * - Tools: while a tool executes, the verb pulses toward mint
+ * - HUD: ( EFFORT · ↓ N tokens · mm:ss ); "~" marks a live estimate
+ *
+ * Lightweight by design: a single ~11 Hz clock drives the glyph, sweep, dots and
+ * token tween while the agent streams; zero timers when idle; no output outside TUI.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-
-// ─── Types ────────────────────────────────────────────────────────
+import { fgAnsi, getColorMode, paintFg, syncColorMode, type RGB } from "../shared/color";
 
 type SpinnerMode = "requesting" | "thinking" | "responding" | "tool-input" | "tool-use";
+export type RunOutcome = "completed" | "aborted" | "error";
 
-// ─── Verbs (Claude Code spinner verbs + sakura extras) ─────────────
+// ─── Verbs ────────────────────────────────────────────────────────
 
-// Claude Code SPINNER_VERBS (+ sakura extras) · 217 total
-const VERBS = [
-  "Accomplishing", "Actioning", "Actualizing", "Analyzing", "Architecting",
-  "Baking", "Beaming", "Beboppin'", "Befuddling", "Billowing",
-  "Blanching", "Blooming", "Bloviating", "Boogieing", "Boondoggling",
-  "Booping", "Bootstrapping", "Brewing", "Building", "Bunning",
-  "Burrowing", "Calculating", "Canoodling", "Caramelizing", "Cascading",
-  "Catapulting", "Cerebrating", "Channeling", "Channelling", "Choreographing",
-  "Churning", "Clauding", "Coalescing", "Cogitating", "Combobulating",
-  "Composing", "Computing", "Concocting", "Considering", "Contemplating",
-  "Cooking", "Crafting", "Creating", "Crunching", "Crystallizing",
-  "Cultivating", "Debugging", "Deciphering", "Decorating", "Deliberating",
-  "Designing", "Determining", "Developing", "Dilly-dallying", "Discombobulating",
-  "Doing", "Doodling", "Dreaming", "Drizzling", "Dusting",
-  "Ebbing", "Effecting", "Elucidating", "Embellishing", "Enchanting",
-  "Envisioning", "Evaluating", "Evaporating", "Examining", "Exploring",
-  "Fermenting", "Fiddle-faddling", "Finagling", "Fixing", "Flambéing",
-  "Flibbertigibbeting", "Flowing", "Flummoxing", "Fluttering", "Folding",
-  "Forging", "Forming", "Frolicking", "Frosting", "Gallivanting",
-  "Galloping", "Garnishing", "Generating", "Germinating", "Gesticulating",
-  "Gitifying", "Glazing", "Grooving", "Gusting", "Harmonizing",
-  "Hashing", "Hatching", "Herding", "Honking", "Hullaballooing",
-  "Hyperspacing", "Ideating", "Imagining", "Implementing", "Improvising",
-  "Incubating", "Inferring", "Infusing", "Inspecting", "Investigating",
-  "Ionizing", "Jitterbugging", "Julienning", "Kneading", "Leavening",
-  "Levitating", "Lollygagging", "Manifesting", "Mapping", "Marinating",
-  "Meandering", "Metamorphosing", "Misting", "Moonwalking", "Moseying",
-  "Mulling", "Musing", "Mustering", "Nebulizing", "Nesting",
-  "Newspapering", "Noodling", "Nucleating", "Optimizing", "Orbiting",
-  "Orchestrating", "Osmosing", "Painting", "Perambulating", "Percolating",
-  "Perusing", "Philosophising", "Photosynthesizing", "Planning", "Polishing",
-  "Pollinating", "Pondering", "Pontificating", "Pouncing", "Precipitating",
-  "Prestidigitating", "Processing", "Proofing", "Propagating", "Puttering",
-  "Puzzling", "Quantumizing", "Razzle-dazzling", "Razzmatazzing", "Recombobulating",
-  "Refactoring", "Researching", "Reticulating", "Reviewing", "Roosting",
-  "Ruminating", "Sautéing", "Scampering", "Schlepping", "Sculpting",
-  "Scurrying", "Seasoning", "Shenaniganing", "Shimmying", "Simmering",
-  "Skedaddling", "Sketching", "Slithering", "Smooshing", "Sock-hopping",
-  "Solving", "Sparkling", "Spelunking", "Spinning", "Sprouting",
-  "Stewing", "Sublimating", "Swirling", "Swooping", "Symbioting",
-  "Synthesizing", "Tempering", "Thinking", "Thundering", "Tinkering",
-  "Tomfoolering", "Topsy-turvying", "Transfiguring", "Transmuting", "Twisting",
-  "Undulating", "Unfurling", "Unravelling", "Vibing", "Waddling",
-  "Wandering", "Warping", "Weaving", "Whatchamacalliting", "Whirlpooling",
-  "Whirring", "Whisking", "Wibbling", "Working", "Wrangling",
-  "Zesting", "Zigzagging",
-];
+export const VERBS = [
+  "Baking", "Blooming", "Brewing", "Caramelizing", "Choreographing",
+  "Churning", "Cogitating", "Composing", "Concocting", "Contemplating",
+  "Crafting", "Crystallizing", "Cultivating", "Deliberating", "Doodling",
+  "Dreaming", "Drizzling", "Dusting", "Embellishing", "Enchanting",
+  "Fermenting", "Flambéing", "Fluttering", "Folding", "Frosting",
+  "Garnishing", "Glazing", "Harmonizing", "Imagining", "Infusing",
+  "Kneading", "Leavening", "Marinating", "Meandering", "Mulling",
+  "Musing", "Noodling", "Orchestrating", "Percolating", "Polishing",
+  "Pondering", "Proofing", "Puttering", "Ruminating", "Sautéing",
+  "Sculpting", "Simmering", "Sketching", "Sparkling", "Sprouting",
+  "Steeping", "Tempering", "Tinkering", "Unfurling", "Weaving",
+  "Whisking", "Zesting",
+] as const;
 
-// Past-tense completion notify (Claude/upstream style)
 const COMPLETION_VERBS = [
-  "Baked", "Brewed", "Churned", "Cogitated", "Cooked",
-  "Crunched", "Frosted", "Glazed", "Kneaded", "Polished",
-  "Sautéed", "Simmered", "Sparkled", "Tempered", "Whisked",
-  "Worked",
-];
+  "Baked", "Brewed", "Churned", "Cooked", "Frosted", "Glazed", "Kneaded",
+  "Polished", "Simmered", "Sparkled", "Tempered", "Whisked",
+] as const;
 
-// ─── Glyphs ───────────────────────────────────────────────────────
+// ─── Palette (sakura-macaron theme vars) ──────────────────────────
 
-// Claude-style spinner glyphs (same set for all modes)
+const SAKURA: RGB = [242, 167, 198]; // #F2A7C6
+const PEACH: RGB = [246, 188, 154]; // #F6BC9A
+const PETAL: RGB = [239, 195, 230]; // #EFC3E6
+const LAVENDER: RGB = [199, 184, 245]; // #C7B8F5
+const SKY: RGB = [159, 211, 242]; // #9FD3F2
+const MINT: RGB = [174, 229, 197]; // #AEE5C5
+const CORAL: RGB = [255, 143, 163]; // #FF8FA3
+const MUTED: RGB = [169, 155, 174]; // #A99BAE
+const HIGHLIGHT: RGB = [255, 248, 252]; // petal white
+const SWEEP_STOPS: readonly RGB[] = [SAKURA, PEACH, PETAL, LAVENDER, SKY];
+
+// Claude-style ping-pong spinner glyphs.
 const GLYPHS = ["·", "✢", "✳", "✶", "✻", "✽"];
-// Arrow prefix per mode: ↑ for requesting, ↓ for everything else
-const ARROW_REQUESTING = "↑";
-const ARROW_WORKING = "↓";
-
-// Ping-pong spinner frames (forward then reverse, like Claude Code)
 const SPINNER_FRAMES = [...GLYPHS, ...[...GLYPHS].reverse()];
 
-// ─── ANSI Colors ──────────────────────────────────────────────────
+// ─── Timing ───────────────────────────────────────────────────────
 
-const RESET = "\x1b[0m";
-// Sakura-macaron palette (truecolor, theme-aligned)
-const SAKURA: [number, number, number] = [242, 167, 198]; // #F2A7C6
-const PEACH: [number, number, number] = [252, 201, 185];  // #FCC9B9
-const PETAL: [number, number, number] = [239, 195, 230];  // #EFC3E6
-const LAVENDER: [number, number, number] = [199, 184, 245]; // #C7B8F5
-const SKY: [number, number, number] = [159, 211, 242];    // #9FD3F2
-const MINT: [number, number, number] = [174, 229, 197];   // #AEE5C5
-const CORAL: [number, number, number] = [255, 143, 163];  // #FF8FA3
-const MUTED: [number, number, number] = [169, 155, 174];  // #A99BAE
-const DIM_RGB: [number, number, number] = [113, 104, 121]; // #716879
-const HIGHLIGHT: [number, number, number] = [255, 248, 252]; // soft white petal
-
-const ORANGE = `\x1b[38;2;${SAKURA[0]};${SAKURA[1]};${SAKURA[2]}m`; // spinner glyph tint
-const DIM = `\x1b[38;2;${MUTED[0]};${MUTED[1]};${MUTED[2]}m`;
-
-// ─── Timing Constants ─────────────────────────────────────────────
-
-const SHIMMER_MS_REQUESTING = 45;   // slightly snappier send
-const SHIMMER_MS_WORKING = 120;     // smoother receive sweep
-const TOKEN_COUNTER_MS = 40;
-const SHIMMER_BAND = 5;             // wider soft bloom
+/** The only animation clock (~11 Hz). */
+export const TICK_MS = 90;
+const SHIMMER_BAND = 5;
+const DOTS_EVERY_TICKS = 10;
 const STALL_TIMEOUT_MS = 3_000;
-const STALL_ERROR_RED: [number, number, number] = CORAL;
-const STALL_TRANSITION_FRAMES = 28;
-const THINKING_GLOW_DELAY_MS = 1_800; // earlier glow
+const STALL_FADE_MS = 2_000;
+const THINKING_GLOW_DELAY_MS = 1_800;
 const THINKING_GLOW_PERIOD_MS = 1_600;
-const THINKING_BASE_RGB: [number, number, number] = LAVENDER;
-const THINKING_SHIMMER_RGB: [number, number, number] = HIGHLIGHT;
+const TOOL_PULSE_PERIOD_MS = 1_400;
 
-// ─── Helpers ──────────────────────────────────────────────────────
+// ─── Pure helpers (exported for tests) ────────────────────────────
 
-function pickVerb(): string {
-  return VERBS[Math.floor(Math.random() * VERBS.length)]!;
+export function pickVerb(random: () => number = Math.random): string {
+  return VERBS[Math.floor(random() * VERBS.length) % VERBS.length]!;
 }
 
-function formatDuration(ms: number): string {
-  const s = Math.floor(ms / 1000);
+export function formatDuration(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(s / 60);
-  if (m > 0) return `${m}m ${s % 60}s`;
-  return `${s}s`;
+  return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
 }
+
+/** Fixed-width clock: mm:ss, or hh:mm:ss past one hour. */
+export function formatDigital(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const mm = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+  const ss = String(total % 60).padStart(2, "0");
+  return h > 0 ? `${String(h).padStart(2, "0")}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+const SMALL_NUMBER = new Intl.NumberFormat("en-US");
+const COMPACT_NUMBER = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 
 export function formatTokenCount(n: number): string {
   const value = Math.max(0, Math.round(n));
-  const number = value < 1_000
-    ? new Intl.NumberFormat("en-US").format(value)
-    : new Intl.NumberFormat("en-US", {
-        notation: "compact",
-        maximumFractionDigits: 1,
-      }).format(value).replace("K", "k");
+  const number = value < 1_000 ? SMALL_NUMBER.format(value) : COMPACT_NUMBER.format(value).replace("K", "k");
   return `${number} ${value === 1 ? "token" : "tokens"}`;
 }
 
-/**
- * Trailing dots with FIXED width 3 so the status HUD never shifts when
- * the ellipsis animates (.  / .. / ...).
- * ~8 shimmer frames per step ≈ 1s/step at 120ms tick (calm, not frantic).
- */
-function animatedDots(frame: number): string {
+/** Fixed-width trailing dots so the HUD never shifts. */
+function animatedDots(tick: number): string {
   const cycle = [".  ", ".. ", "..."] as const;
-  return cycle[Math.floor(frame / 8) % cycle.length]!;
-}
-
-/** Token count — always sky (same as ↑/↓); ~ marks live fallback estimates. */
-function styleTokenCount(n: number, estimated: boolean): string {
-  return rgbAnsi(SKY, `${estimated ? "~" : ""}${formatTokenCount(n)}`);
+  return cycle[Math.floor(tick / DOTS_EVERY_TICKS) % cycle.length]!;
 }
 
 export type AssistantTokenMessage = {
@@ -169,553 +120,431 @@ export type AssistantTokenMessage = {
     cacheWrite?: number;
     totalTokens?: number;
   };
+  stopReason?: string;
 };
 
-export function reportedOutputTokens(
-  message: AssistantTokenMessage | undefined,
-  final = false,
-): number | null {
+/** Provider-reported output tokens, or null when the provider has not reported any. */
+export function reportedOutputTokens(message: AssistantTokenMessage | undefined, final = false): number | null {
   const usage = message?.usage;
   const output = usage?.output;
   if (typeof output !== "number" || !Number.isFinite(output) || output < 0) return null;
   if (output > 0) return Math.round(output);
-  // Streaming messages start with a zero-filled Usage object. At message_end, non-zero
-  // input/cache/total proves the provider really reported usage, so output=0 is valid.
-  const hasFinalUsage = final && [
-    usage?.input,
-    usage?.cacheRead,
-    usage?.cacheWrite,
-    usage?.totalTokens,
-  ].some((value) => typeof value === "number" && value > 0);
+  // Streaming messages start with zero-filled usage. At message_end, non-zero
+  // input/cache/total proves the provider reported usage, so output=0 is real.
+  const hasFinalUsage = final && [usage?.input, usage?.cacheRead, usage?.cacheWrite, usage?.totalTokens]
+    .some((value) => typeof value === "number" && value > 0);
   return hasFinalUsage ? 0 : null;
 }
 
 const CJK_CHAR = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const EMOJI_CHAR = /\p{Extended_Pictographic}/u;
+// Extended_Pictographic includes text-style symbols such as © ® ™ ‼ that tokenize like normal chars.
+const TEXT_SYMBOLS = new Set(["©", "®", "™", "‼", "⁉", "ℹ", "↔", "↕", "↖", "↗", "↘", "↙"]);
 
 /** Quarter-token units make estimates additive across streamed deltas. */
-function estimateTextTokenUnits(text: string): number {
+export function estimateTextTokenUnits(text: string): number {
   let units = 0;
   for (const char of text) {
     if (char.codePointAt(0)! <= 0x7f) units += 1; // ≈ 4 ASCII chars/token
-    else if (EMOJI_CHAR.test(char)) units += 8; // ≈ 2 tokens
     else if (CJK_CHAR.test(char)) units += 4; // ≈ 1 token
+    else if (EMOJI_CHAR.test(char) && !TEXT_SYMBOLS.has(char)) units += 8; // ≈ 2 tokens
     else units += 2;
   }
   return units;
 }
 
-/** Better live fallback than chars/4 for CJK/emoji; final provider usage replaces it. */
 export function estimateTextTokens(text: string): number {
-  return Math.max(0, Math.ceil(estimateTextTokenUnits(text) / 4));
+  return Math.ceil(estimateTextTokenUnits(text) / 4);
 }
 
-function estimateBlockTokenUnits(block: NonNullable<AssistantTokenMessage["content"]>[number]): number {
-  if (block.type === "text" && typeof block.text === "string") {
-    return estimateTextTokenUnits(block.text);
+type ContentBlock = NonNullable<AssistantTokenMessage["content"]>[number];
+
+function toolCallText(name: string | undefined, args: unknown): string {
+  try {
+    return (name ?? "") + JSON.stringify(args ?? {});
+  } catch {
+    return name ?? "";
   }
-  if (block.type === "thinking" && typeof block.thinking === "string") {
-    return estimateTextTokenUnits(block.thinking);
-  }
-  if (block.type === "toolCall") {
-    let text = block.name ?? "";
-    try {
-      text += JSON.stringify(block.arguments ?? {});
-    } catch {}
-    return estimateTextTokenUnits(text);
-  }
+}
+
+function estimateBlockTokenUnits(block: ContentBlock): number {
+  if (block.type === "text" && typeof block.text === "string") return estimateTextTokenUnits(block.text);
+  if (block.type === "thinking" && typeof block.thinking === "string") return estimateTextTokenUnits(block.thinking);
+  if (block.type === "toolCall") return estimateTextTokenUnits(toolCallText(block.name, block.arguments));
   return 0;
 }
 
 export function estimateOutputTokens(message: AssistantTokenMessage | undefined): number {
   const units = message?.content?.reduce((sum, block) => sum + estimateBlockTokenUnits(block), 0) ?? 0;
-  return Math.max(0, Math.ceil(units / 4));
+  return Math.ceil(units / 4);
 }
 
-// ─── Shimmer Engine ───────────────────────────────────────────────
-
-function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace("#", "");
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16),
-  ];
-}
-
-function blend(
-  a: [number, number, number],
-  b: [number, number, number],
-  t: number,
-): [number, number, number] {
-  return [
-    Math.round(a[0] + (b[0] - a[0]) * t),
-    Math.round(a[1] + (b[1] - a[1]) * t),
-    Math.round(a[2] + (b[2] - a[2]) * t),
-  ];
-}
-
-/** Sample fixed sakura → sky macaron stops (0..1). */
-function sampleMacaron(pos: number): [number, number, number] {
-  const stops: [number, number, number][] = [SAKURA, PEACH, PETAL, LAVENDER, SKY];
-  const n = Math.max(0, Math.min(1, pos));
-  const scaled = n * (stops.length - 1);
-  const i = Math.min(stops.length - 2, Math.floor(scaled));
-  return blend(stops[i]!, stops[i + 1]!, scaled - i);
+export interface TokenReading {
+  tokens: number;
+  /** True when the number is (partly) our estimate rather than provider usage. */
+  estimated: boolean;
 }
 
 /**
- * Macaron color-sweep: base walk along sakura→sky, with a soft white bloom band.
- * reverse = true sweeps right→left (working/thinking).
+ * While streaming, provider usage is often a stub (Anthropic reports output≈1 at
+ * message_start), so show whichever is larger; it is only exact when the report
+ * already covers the estimate.
  */
-function colorSweep(
-  text: string,
-  frame: number,
-  _baseHex: string,
-  _shimmerHex: string,
-  reverse: boolean,
-): string {
-  const total = text.length + SHIMMER_BAND * 2;
-  const rawPos = frame % total;
-  const pos = reverse ? total - 1 - rawPos : rawPos;
+export function liveTokenReading(reported: number | null, estimate: number): TokenReading {
+  const r = reported ?? 0;
+  if (reported !== null && r >= estimate) return { tokens: r, estimated: false };
+  return { tokens: Math.max(r, estimate), estimated: estimate > 0 };
+}
 
+/**
+ * Final usage of a finished assistant message. Only a normal stop is authoritative;
+ * aborted/errored messages may carry a stub usage, so they keep the larger value.
+ */
+export function finalTokenReading(message: AssistantTokenMessage | undefined): TokenReading {
+  const reported = reportedOutputTokens(message, true);
+  const estimate = estimateOutputTokens(message);
+  const interrupted = message?.stopReason === "aborted" || message?.stopReason === "error";
+  if (!interrupted && reported !== null) return { tokens: reported, estimated: false };
+  return liveTokenReading(reported, estimate);
+}
+
+export function outcomeFromStopReason(stopReason: string | undefined): RunOutcome {
+  if (stopReason === "aborted") return "aborted";
+  if (stopReason === "error") return "error";
+  return "completed";
+}
+
+/**
+ * Plain-text completion notice: only successful runs get one. Pi already reports
+ * aborts ("Operation aborted") and errors in the chat, so we stay quiet then.
+ */
+export function completionNotice(outcome: RunOutcome, elapsedMs: number, random: () => number = Math.random): string | undefined {
+  if (outcome !== "completed") return undefined;
+  const done = COMPLETION_VERBS[Math.floor(random() * COMPLETION_VERBS.length) % COMPLETION_VERBS.length];
+  return `✻ ${done} for ${formatDuration(elapsedMs)}`;
+}
+
+/** Ease the displayed counter toward its target (one step per tick). */
+export function tweenTokens(displayed: number, target: number): number {
+  const gap = target - displayed;
+  const distance = Math.abs(gap);
+  if (distance === 0) return target;
+  const step =
+    distance < 8 ? distance :
+    distance < 40 ? Math.max(2, Math.ceil(distance * 0.28)) :
+    distance < 200 ? Math.max(8, Math.ceil(distance * 0.2)) :
+    Math.max(24, Math.ceil(distance * 0.14));
+  return displayed + Math.sign(gap) * Math.min(distance, step);
+}
+
+export function blend(a: RGB, b: RGB, t: number): RGB {
+  const k = Math.max(0, Math.min(1, t));
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * k),
+    Math.round(a[1] + (b[1] - a[1]) * k),
+    Math.round(a[2] + (b[2] - a[2]) * k),
+  ];
+}
+
+function sampleStops(pos: number): RGB {
+  const scaled = Math.max(0, Math.min(1, pos)) * (SWEEP_STOPS.length - 1);
+  const i = Math.min(SWEEP_STOPS.length - 2, Math.floor(scaled));
+  return blend(SWEEP_STOPS[i]!, SWEEP_STOPS[i + 1]!, scaled - i);
+}
+
+/**
+ * Highlight center for a sweep frame. It starts SHIMMER_BAND cells outside the
+ * text and leaves SHIMMER_BAND cells past the other end, so it enters and exits smoothly.
+ */
+export function sweepPosition(length: number, frame: number, reverse: boolean): number {
+  const total = length + SHIMMER_BAND * 2;
+  const step = ((frame % total) + total) % total;
+  return reverse ? length - 1 + SHIMMER_BAND - step : step - SHIMMER_BAND;
+}
+
+/**
+ * Macaron sweep with a soft white bloom. `tint` pulls every char toward `tintColor`
+ * (stall → coral, tool → mint) while keeping the sweep alive.
+ */
+export function colorSweep(text: string, frame: number, reverse: boolean, tint = 0, tintColor: RGB = CORAL): string {
+  const chars = [...text];
+  const pos = sweepPosition(chars.length, frame, reverse);
+  const highlight = blend(HIGHLIGHT, tintColor, tint * 0.6);
   let out = "";
-  for (let i = 0; i < text.length; i++) {
-    const basePos = text.length <= 1 ? 0 : i / (text.length - 1);
-    const base = sampleMacaron(basePos);
-    const dist = Math.abs(i - pos);
-    const t = Math.max(0, 1 - dist / SHIMMER_BAND);
-    // Soft bloom toward petal-white; ease-out so edges stay pastel.
-    const ease = t * t;
-    const c = blend(base, HIGHLIGHT, ease * 0.92);
-    out += `\x1b[38;2;${c[0]};${c[1]};${c[2]}m${text[i]}`;
+  for (let i = 0; i < chars.length; i++) {
+    const base = blend(sampleStops(chars.length <= 1 ? 0 : i / (chars.length - 1)), tintColor, tint);
+    const t = Math.max(0, 1 - Math.abs(i - pos) / SHIMMER_BAND);
+    out += fgAnsi(blend(base, highlight, t * t * 0.92)) + chars[i];
   }
-  out += RESET;
-  return out;
+  return getColorMode() === "none" ? out : `${out}\x1b[39m`;
 }
 
-function rgbAnsi(c: [number, number, number], text: string): string {
-  return `\x1b[38;2;${c[0]};${c[1]};${c[2]}m${text}${RESET}`;
+/** Animations and notices only belong in the interactive terminal UI. */
+export function isInteractiveTui(ctx: Pick<ExtensionContext, "mode" | "hasUI"> | undefined): boolean {
+  if (!ctx) return false;
+  return typeof ctx.mode === "string" ? ctx.mode === "tui" : ctx.hasUI === true;
 }
+
+const EFFORT_TAGS: Record<string, { tag: string; color: RGB }> = {
+  minimal: { tag: "MINIMAL", color: MUTED },
+  low: { tag: "LOW", color: SKY },
+  medium: { tag: "MEDIUM", color: PETAL },
+  high: { tag: "HIGH", color: SAKURA },
+  xhigh: { tag: "XHIGH", color: LAVENDER },
+  max: { tag: "MAX", color: CORAL },
+};
 
 // ─── Extension ────────────────────────────────────────────────────
 
-export default function (pi: ExtensionAPI) {
-  // ── State ───────────────────────────────────────────────────
-
-  let mode: SpinnerMode = "requesting";
-  let verb = "";
-  let agentStart = 0;
-  let turnStart = 0;
-  let thinkingStart = 0;
-  let completedOutputTokens = 0;
-  let currentEstimatedTokens = 0;
-  let currentReportedTokens: number | null = null;
-  const currentBlockTokenUnits = new Map<number, number>();
-  let currentEstimatedTokenUnits = 0;
-  let lastTokenTime = 0;
-  let turnActive = false;
-  let activeToolCount = 0;
-
-  // Stall smooth interpolation (0→1)
-  let _stallFrame = 0;
-  // Smooth cumulative output-token animation. Provider usage can correct either direction.
-  let _displayedTokens = 0;
-  let _tokensMoving = false;
-
-  // Timers
-  let shimmerTimer: ReturnType<typeof setInterval> | null = null;
-  let tokenTimer: ReturnType<typeof setInterval> | null = null;
-  let shimmerFrame = 0;
-
-  // State
+export default function claudeShimmer(pi: ExtensionAPI) {
   let ctx_: ExtensionContext | null = null;
 
-  // ── Helpers ─────────────────────────────────────────────────
+  // Agent run (agent_start … agent_settled; spans retries and tool rounds).
+  let runActive = false;
+  let runStart = 0;
+  let verb = "";
+  let runOutcome: RunOutcome = "completed";
+  let completedTokens = 0;
+  let completedEstimated = false;
 
-  /**
-   * Pi ThinkingLevel: off | minimal | low | medium | high | xhigh | max
-   * Label + macaron color per tier (matches sakura-macaron thinking* theme tokens).
-   */
-  function getEffortInfo(): { tag: string; color: [number, number, number] } | undefined {
+  // Current assistant message.
+  let mode: SpinnerMode = "requesting";
+  let thinkingStart = 0;
+  let lastStreamAt = 0;
+  let activeToolCount = 0;
+  let toolStart = 0;
+  let reportedTokens: number | null = null;
+  const blockUnits = new Map<number, number>();
+  let estimateUnits = 0;
+
+  // Animation.
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let tick = 0;
+  let displayedTokens = 0;
+
+  const currentEstimate = () => Math.ceil(estimateUnits / 4);
+
+  function tokenTarget(): TokenReading {
+    const live = liveTokenReading(reportedTokens, currentEstimate());
+    return { tokens: completedTokens + live.tokens, estimated: completedEstimated || live.estimated };
+  }
+
+  function effortTag(): string | undefined {
+    let level = "";
     try {
-      const level = (pi.getThinkingLevel() || "").toLowerCase();
-      if (!level || level === "off") return undefined;
-      // Colors align with theme thinkingMinimal→thinkingMax scale.
-      const map: Record<string, { tag: string; color: [number, number, number] }> = {
-        minimal: { tag: "MINIMAL", color: MUTED },
-        low: { tag: "LOW", color: SKY },
-        medium: { tag: "MEDIUM", color: PETAL },
-        high: { tag: "HIGH", color: SAKURA },
-        xhigh: { tag: "XHIGH", color: LAVENDER },
-        max: { tag: "MAX", color: CORAL },
-      };
-      return map[level] ?? { tag: level.toUpperCase(), color: LAVENDER };
-    } catch {
-      return undefined;
-    }
-  }
-
-  /** Digital clock — fixed mm:ss (or h:mm:ss with padded h). */
-  function formatDigital(ms: number): string {
-    const total = Math.max(0, Math.floor(ms / 1000));
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    const mm = String(m).padStart(2, "0");
-    const ss = String(s).padStart(2, "0");
-    if (h <= 0) return `${mm}:${ss}`;
-    // Keep colon pattern stable; pad hours to 2 when small.
-    const hh = String(h).padStart(2, "0");
-    return `${hh}:${mm}:${ss}`;
-  }
-
-  /** Effort label — stable for the whole turn; never swapped for SEND/RECV/TOOL. */
-  function effortTagStyled(): string | undefined {
-    const info = getEffortInfo();
-    // Only show when we have a real level, or while thinking with unknown level.
+      level = String(pi.getThinkingLevel() || "").toLowerCase();
+    } catch {}
+    const info = level && level !== "off" ? EFFORT_TAGS[level] ?? { tag: level.toUpperCase(), color: LAVENDER } : undefined;
     const tag = info?.tag ?? (mode === "thinking" ? "THINK" : "");
     if (!tag) return undefined;
     const base = info?.color ?? LAVENDER;
-
-    // Soft glow while actively thinking (base tier color → petal white).
-    if (mode === "thinking") {
-      const thinkElapsed = Date.now() - thinkingStart;
-      if (thinkElapsed > THINKING_GLOW_DELAY_MS) {
-        const sec = (thinkElapsed - THINKING_GLOW_DELAY_MS) / 1000;
-        const opacity = (Math.sin((sec * Math.PI * 2) / (THINKING_GLOW_PERIOD_MS / 1000)) + 1) / 2;
-        const c = blend(base, HIGHLIGHT, opacity);
-        return `\x1b[38;2;${c[0]};${c[1]};${c[2]}m${tag}\x1b[0m`;
-      }
+    const thinkElapsed = Date.now() - thinkingStart;
+    if (mode === "thinking" && thinkElapsed > THINKING_GLOW_DELAY_MS) {
+      const phase = ((thinkElapsed - THINKING_GLOW_DELAY_MS) / THINKING_GLOW_PERIOD_MS) * Math.PI * 2;
+      return paintFg(blend(base, HIGHLIGHT, (Math.sin(phase) + 1) / 2), tag);
     }
-    return rgbAnsi(base, tag);
+    return paintFg(base, tag);
   }
 
-  /**
-   * Inner status fields, joined later inside one pair of ().
-   * Separator matches upstream: " · ".
-   */
-  function buildStatusParts(): string[] {
-    const elapsed = Date.now() - (agentStart || turnStart);
-    const tokens = Math.round(Math.max(0, _displayedTokens));
-    const estimated = currentReportedTokens === null && currentEstimatedTokens > 0;
-    // Show token chip for any active stream phase (incl. requesting after start).
-    const showTokens = turnActive || tokens > 0;
-    // Clock once turn is live — same rules as tokens so fields appear together.
-    const showTimer = turnActive || elapsed > 0;
-    const parts: string[] = [];
-
-    // 1) Effort — stable, tier-colored (MINIMAL…MAX)
-    const effortPart = effortTagStyled();
-    if (effortPart) parts.push(effortPart);
-
-    // 2) Tokens — provider output usage; ~ means live fallback estimate.
-    if (showTokens) {
-      const arrow = mode === "requesting" ? ARROW_REQUESTING : ARROW_WORKING;
-      const count = styleTokenCount(tokens, estimated);
-      parts.push(`${rgbAnsi(SKY, arrow)} ${count}`);
-    }
-
-    // 3) Wall clock — muted, fixed mm:ss
-    if (showTimer) {
-      parts.push(rgbAnsi(MUTED, formatDigital(elapsed)));
-    }
-
-    // Stall is only reflected in verb color (coral fade) — no STALL chip.
-    return parts;
+  function stallAmount(now: number): number {
+    if (mode === "tool-use" || mode === "tool-input" || activeToolCount > 0 || lastStreamAt === 0) return 0;
+    return Math.max(0, Math.min(1, (now - lastStreamAt - STALL_TIMEOUT_MS) / STALL_FADE_MS));
   }
 
-  /**
-   * Upstream pi-claude-shimmer layout:
-   *   verb… (part · part · part)
-   * Outer () + inner " · "; brackets stay fixed-width thanks to padded dots.
-   */
-  function wrapStatusHud(parts: string[]): string {
-    if (parts.length === 0) return "";
-    // One space inside each paren: ( HIGH · ↓ 0 · 00:12 )
-    return `${DIM}( ${parts.join(" · ")} )${RESET}`;
-  }
-
-  function isStalled(): boolean {
-    return (
-      mode !== "tool-use" &&
-      mode !== "tool-input" &&
-      activeToolCount === 0 &&
-      turnActive &&
-      lastTokenTime > 0 &&
-      Date.now() - lastTokenTime > STALL_TIMEOUT_MS
-    );
-  }
-
-  function buildShimmerMessage(): string {
-    const parts = buildStatusParts();
+  function buildMessage(): string {
+    const now = Date.now();
+    const glyph = paintFg(SAKURA, SPINNER_FRAMES[tick % SPINNER_FRAMES.length]!);
+    const text = `${verb}${animatedDots(tick)}`;
     const reverse = mode !== "requesting";
-    // Kept as hex for stall blend path; colorSweep ignores them (uses macaron stops).
-    const baseHex = "#F2A7C6";
-    const shimmerHex = "#FFF8FC";
-    const stalled = _stallFrame > 0;
-    // Live trailing dots so "Dusting" never looks frozen
-    const dots = animatedDots(shimmerFrame);
-    const verbWithDots = `${verb}${dots}`;
-
     let verbText: string;
-
     if (mode === "tool-use") {
-      // Flash: sakura ↔ mint (tool busy) or coral when stalled
-      const flashOpacity = (Math.sin((shimmerFrame * SHIMMER_MS_WORKING / 1000) * Math.PI) + 1) / 2;
-      if (stalled) {
-        const stallT = _stallFrame / STALL_TRANSITION_FRAMES;
-        const stallC = blend(SAKURA, STALL_ERROR_RED, stallT);
-        const flashC = blend(stallC, CORAL, flashOpacity);
-        verbText = `\x1b[38;2;${flashC[0]};${flashC[1]};${flashC[2]}m${verbWithDots}\x1b[0m`;
-      } else {
-        const c = blend(SAKURA, MINT, flashOpacity);
-        verbText = `\x1b[38;2;${c[0]};${c[1]};${c[2]}m${verbWithDots}\x1b[0m`;
-      }
-    } else if (stalled) {
-      // Smooth stall: gradually blend to coral, still sweep + dots
-      const stallT = _stallFrame / STALL_TRANSITION_FRAMES;
-      const baseC = hexToRgb(baseHex);
-      const shimC = hexToRgb(shimmerHex);
-      const stallBase = blend(baseC, STALL_ERROR_RED, stallT);
-      const stallShimmer = blend(shimC, CORAL, stallT);
-      const baseHexStr = `#${stallBase[0].toString(16).padStart(2,"0")}${stallBase[1].toString(16).padStart(2,"0")}${stallBase[2].toString(16).padStart(2,"0")}`;
-      const shimmerHexStr = `#${stallShimmer[0].toString(16).padStart(2,"0")}${stallShimmer[1].toString(16).padStart(2,"0")}${stallShimmer[2].toString(16).padStart(2,"0")}`;
-      verbText = colorSweep(verbWithDots, shimmerFrame, baseHexStr, shimmerHexStr, reverse);
+      const pulse = (Math.sin(((now - toolStart) / TOOL_PULSE_PERIOD_MS) * Math.PI * 2) + 1) / 2;
+      verbText = colorSweep(text, tick, reverse, 0.25 + pulse * 0.5, MINT);
     } else {
-      verbText = colorSweep(verbWithDots, shimmerFrame, baseHex, shimmerHex, reverse);
+      verbText = colorSweep(text, tick, reverse, stallAmount(now), CORAL);
     }
 
-    // One outer [] HUD; dots are fixed-width so this never shifts.
-    const hud = wrapStatusHud(parts);
-    return hud ? `${verbText} ${hud}` : verbText;
+    const parts: string[] = [];
+    const effort = effortTag();
+    if (effort) parts.push(effort);
+    const target = tokenTarget();
+    const arrow = mode === "requesting" ? "↑" : "↓";
+    parts.push(paintFg(SKY, `${arrow} ${target.estimated ? "~" : ""}${formatTokenCount(displayedTokens)}`));
+    parts.push(paintFg(MUTED, formatDigital(now - runStart)));
+    const hud = `${paintFg(MUTED, "( ")}${parts.join(paintFg(MUTED, " · "))}${paintFg(MUTED, " )")}`;
+    return `${glyph} ${verbText} ${hud}`;
   }
 
   function updateDisplay() {
-    if (!ctx_?.ui) return;
-    ctx_.ui.setWorkingMessage(buildShimmerMessage());
+    const ctx = ctx_;
+    if (!ctx || !timer) return;
+    try {
+      ctx.ui.setWorkingMessage(buildMessage());
+    } catch {
+      // UI disposed mid-tick (session replaced/shutdown): stop quietly.
+      stopClock();
+    }
   }
 
-  function startShimmer() {
-    stopShimmer();
-    shimmerFrame = 0;
-    updateDisplay();
-    const intervalMs = mode === "requesting" ? SHIMMER_MS_REQUESTING : SHIMMER_MS_WORKING;
-    shimmerTimer = setInterval(() => {
-      shimmerFrame++;
-      // Stall smooth interpolation
-      const stalled = isStalled();
-      if (stalled && _stallFrame < STALL_TRANSITION_FRAMES) {
-        _stallFrame++;
-      } else if (!stalled && _stallFrame > 0) {
-        _stallFrame--;
-      }
+  function startClock() {
+    if (timer || !isInteractiveTui(ctx_ ?? undefined)) return;
+    try {
+      // Glyph lives inside the message so our clock is the only one; hide Pi's.
+      ctx_!.ui.setWorkingIndicator({ frames: [], intervalMs: TICK_MS });
+    } catch {
+      return;
+    }
+    timer = setInterval(() => {
+      tick++;
+      displayedTokens = tweenTokens(displayedTokens, tokenTarget().tokens);
       updateDisplay();
-    }, intervalMs);
-    startTokenCounter();
+    }, TICK_MS);
+    timer.unref?.();
+    updateDisplay();
   }
 
-  function stopShimmer() {
-    if (shimmerTimer) {
-      clearInterval(shimmerTimer);
-      shimmerTimer = null;
-    }
-    stopTokenCounter();
+  function stopClock() {
+    if (timer) clearInterval(timer);
+    timer = null;
   }
 
-  // Token counter runs independently of shimmer. Completed turns use provider-reported
-  // output usage; current streaming turn uses reported usage when available, else estimate.
-  function startTokenCounter() {
-    if (tokenTimer) return;
-    tokenTimer = setInterval(() => {
-      const current = currentReportedTokens ?? currentEstimatedTokens;
-      const target = Math.max(0, completedOutputTokens + current);
-      const gap = target - _displayedTokens;
-      if (gap !== 0) {
-        const distance = Math.abs(gap);
-        const step =
-          distance < 8 ? distance :
-          distance < 40 ? Math.max(2, Math.ceil(distance * 0.28)) :
-          distance < 200 ? Math.max(8, Math.ceil(distance * 0.2)) :
-          Math.max(24, Math.ceil(distance * 0.14));
-        _displayedTokens += Math.sign(gap) * Math.min(distance, step);
-        _tokensMoving = true;
-        updateDisplay();
-      } else if (_tokensMoving) {
-        _tokensMoving = false;
-        updateDisplay();
-      }
-    }, TOKEN_COUNTER_MS);
+  function restoreUi() {
+    const ctx = ctx_;
+    if (!ctx || !isInteractiveTui(ctx)) return;
+    try {
+      ctx.ui.setWorkingMessage();
+      ctx.ui.setWorkingIndicator();
+    } catch {}
   }
 
-  function stopTokenCounter() {
-    if (tokenTimer) {
-      clearInterval(tokenTimer);
-      tokenTimer = null;
-    }
-  }
-
-  function setGlyphs() {
-    if (!ctx_?.ui) return;
-    const intervalMs = 120;
-    ctx_.ui.setWorkingIndicator({
-      frames: SPINNER_FRAMES.map((g) => ORANGE + g + RESET),
-      intervalMs,
-    });
-  }
-
-  function setMode(newMode: SpinnerMode) {
-    if (mode === newMode) return;
-    mode = newMode;
-    setGlyphs();
-    // Restart shimmer timer with mode-appropriate interval
-    if (shimmerTimer) {
-      stopShimmer();
-      startShimmer();
-    }
-  }
-
-  function setEstimatedBlock(index: number, units: number) {
-    const next = Math.max(0, units);
-    const previous = currentBlockTokenUnits.get(index) ?? 0;
-    currentBlockTokenUnits.set(index, next);
-    currentEstimatedTokenUnits += next - previous;
-    currentEstimatedTokens = Math.ceil(currentEstimatedTokenUnits / 4);
-  }
-
-  function appendEstimatedBlock(index: number, text: string) {
-    setEstimatedBlock(index, (currentBlockTokenUnits.get(index) ?? 0) + estimateTextTokenUnits(text));
-  }
-
-  function resetTurn(resetOutput = false) {
-    stopShimmer();
-    ctx_?.ui?.setWorkingMessage();
+  function resetMessage() {
     mode = "requesting";
-    currentBlockTokenUnits.clear();
-    currentEstimatedTokenUnits = 0;
-    currentEstimatedTokens = 0;
-    currentReportedTokens = null;
-    if (resetOutput) {
-      completedOutputTokens = 0;
-      _displayedTokens = 0;
-      _tokensMoving = false;
+    reportedTokens = null;
+    blockUnits.clear();
+    estimateUnits = 0;
+    lastStreamAt = 0;
+  }
+
+  function setBlockUnits(index: number, units: number) {
+    const next = Math.max(0, units);
+    estimateUnits += next - (blockUnits.get(index) ?? 0);
+    blockUnits.set(index, next);
+  }
+
+  function setMode(next: SpinnerMode) {
+    if (mode === next) return;
+    mode = next;
+    updateDisplay();
+  }
+
+  function finishRun() {
+    stopClock();
+    if (!runActive) return;
+    const elapsed = Date.now() - runStart;
+    const outcome = runOutcome;
+    runActive = false;
+    restoreUi();
+    const notice = completionNotice(outcome, elapsed);
+    if (notice && ctx_ && isInteractiveTui(ctx_)) {
+      try {
+        ctx_.ui.notify(`${paintFg(SAKURA, notice.slice(0, 1))}${paintFg(MUTED, notice.slice(1))}`, "info");
+      } catch {}
     }
-    _stallFrame = 0;
-    lastTokenTime = 0;
-    activeToolCount = 0;
-    setGlyphs();
   }
 
   // ── Events ──────────────────────────────────────────────────
 
   pi.on("session_start", async (_event, ctx) => {
     ctx_ = ctx;
+    if (isInteractiveTui(ctx)) syncColorMode(ctx.ui.theme);
   });
 
-  // Initialize shimmer state. Factored out so both agent_start and turn_start
-  // can call it; turn_start skips when already initialized by agent_start.
-  function initTurn(resetOutput = false) {
-    turnActive = true;
-    turnStart = Date.now();
-    if (!agentStart) agentStart = turnStart;
-    verb = pickVerb();
-    resetTurn(resetOutput);
-    setMode("requesting");
-    startShimmer();
-  }
-
-  // agent_start fires before turn_start and is the moment pi rebuilds the
-  // working loader. Initialize shimmer here so the loader picks up our
-  // message + indicator immediately instead of flashing "Working...".
   pi.on("agent_start", async (_event, ctx) => {
     ctx_ = ctx;
-    if (!agentStart) agentStart = Date.now();
-    if (!turnActive) initTurn(true);
+    if (!isInteractiveTui(ctx)) return;
+    syncColorMode(ctx.ui.theme);
+    if (!runActive) {
+      // New run: everything below stays stable across tool rounds and retries.
+      runActive = true;
+      runStart = Date.now();
+      verb = pickVerb();
+      runOutcome = "completed";
+      completedTokens = 0;
+      completedEstimated = false;
+      displayedTokens = 0;
+      tick = 0;
+    }
+    resetMessage();
+    activeToolCount = 0;
+    startClock();
   });
 
   pi.on("turn_start", async (_event, ctx) => {
     ctx_ = ctx;
-    if (turnActive) return;   // already initialized by agent_start
-    initTurn();
+    if (!runActive) return;
+    resetMessage();
+    startClock();
+  });
+
+  pi.on("message_start", async (event, ctx) => {
+    if (!runActive || event.message.role !== "assistant") return;
+    ctx_ = ctx;
+    resetMessage();
   });
 
   pi.on("message_update", async (event, ctx) => {
+    if (!runActive) return;
     ctx_ = ctx;
     const evt = event.assistantMessageEvent;
-    // Pi forwards only non-terminal stream events here; final usage arrives via message_end.
-    const tokenMessage = event.message as AssistantTokenMessage;
-    const reported = reportedOutputTokens(tokenMessage);
-    if (reported !== null) currentReportedTokens = reported;
+    const message = event.message as AssistantTokenMessage;
+    reportedTokens = reportedOutputTokens(message) ?? reportedTokens;
 
-    // Incremental fallback estimate. Streams may interleave blocks, so key by contentIndex.
+    // Incremental estimate keyed by contentIndex (streams may interleave blocks).
     switch (evt.type) {
       case "start":
-        currentBlockTokenUnits.clear();
-        currentEstimatedTokenUnits = 0;
-        currentEstimatedTokens = 0;
+        blockUnits.clear();
+        estimateUnits = 0;
         break;
       case "text_start":
       case "thinking_start":
-        setEstimatedBlock(evt.contentIndex, 0);
+        setBlockUnits(evt.contentIndex, 0);
         break;
       case "text_delta":
       case "thinking_delta":
       case "toolcall_delta":
-        appendEstimatedBlock(evt.contentIndex, evt.delta);
+        setBlockUnits(evt.contentIndex, (blockUnits.get(evt.contentIndex) ?? 0) + estimateTextTokenUnits(evt.delta));
+        lastStreamAt = Date.now();
         break;
       case "text_end":
       case "thinking_end":
-        setEstimatedBlock(evt.contentIndex, estimateTextTokenUnits(evt.content));
+        setBlockUnits(evt.contentIndex, estimateTextTokenUnits(evt.content));
         break;
-      case "toolcall_start":
-        setEstimatedBlock(
-          evt.contentIndex,
-          tokenMessage.content?.[evt.contentIndex]
-            ? estimateBlockTokenUnits(tokenMessage.content[evt.contentIndex]!)
-            : 0,
-        );
-        break;
-      case "toolcall_end": {
-        let text = evt.toolCall.name;
-        try {
-          text += JSON.stringify(evt.toolCall.arguments ?? {});
-        } catch {}
-        setEstimatedBlock(evt.contentIndex, estimateTextTokenUnits(text));
+      case "toolcall_start": {
+        const block = message.content?.[evt.contentIndex];
+        setBlockUnits(evt.contentIndex, block ? estimateBlockTokenUnits(block) : 0);
         break;
       }
+      case "toolcall_end":
+        setBlockUnits(evt.contentIndex, estimateTextTokenUnits(toolCallText(evt.toolCall.name, evt.toolCall.arguments)));
+        break;
     }
 
     switch (evt.type) {
       case "thinking_start":
-        setMode("thinking");
         thinkingStart = Date.now();
-        break;
-
-      case "thinking_delta":
         setMode("thinking");
-        lastTokenTime = Date.now();
         break;
-
-      case "thinking_end":
+      case "thinking_delta":
+        if (mode !== "thinking") {
+          thinkingStart = Date.now();
+          setMode("thinking");
+        }
         break;
-
       case "text_start":
-        if (mode !== "responding") {
-          setMode("responding");
-        }
-        lastTokenTime = Date.now();
-        break;
-
       case "text_delta":
-        if (mode !== "responding") {
-          setMode("responding");
-        }
-        lastTokenTime = Date.now();
+        lastStreamAt = Date.now();
+        setMode("responding");
         break;
-
-      case "text_end":
-        break;
-
       case "toolcall_start":
         setMode("tool-input");
         break;
@@ -723,65 +552,55 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("message_end", async (event, ctx) => {
-    if (event.message.role !== "assistant") return;
+    if (!runActive || event.message.role !== "assistant") return;
     ctx_ = ctx;
-    const finalMessage = event.message as AssistantTokenMessage;
-    const reported = reportedOutputTokens(finalMessage, true);
-    const estimated = estimateOutputTokens(finalMessage);
-    // Exactly once per finalized assistant message. This preserves totals across tool turns.
-    completedOutputTokens += reported ?? estimated;
-    currentBlockTokenUnits.clear();
-    currentEstimatedTokenUnits = 0;
-    currentEstimatedTokens = 0;
-    currentReportedTokens = null;
-    // Snap at provider completion so estimates can correct downward before tool execution.
-    _displayedTokens = completedOutputTokens;
-    _tokensMoving = false;
+    const message = event.message as AssistantTokenMessage;
+    const final = finalTokenReading(message);
+    // Exactly once per finalized assistant message; totals accumulate across tool turns.
+    completedTokens += final.tokens;
+    completedEstimated ||= final.estimated;
+    runOutcome = outcomeFromStopReason(message.stopReason);
+    resetMessage();
+    mode = "responding";
+    // Snap so a correction (either direction) lands before tools run.
+    displayedTokens = completedTokens;
     updateDisplay();
   });
 
   pi.on("tool_execution_start", async (_event, ctx) => {
+    if (!runActive) return;
     ctx_ = ctx;
-    activeToolCount++;
+    if (activeToolCount++ === 0) toolStart = Date.now();
+    setMode("tool-use");
   });
 
   pi.on("tool_execution_end", async (_event, ctx) => {
+    if (!runActive) return;
     ctx_ = ctx;
     activeToolCount = Math.max(0, activeToolCount - 1);
-    // After all tools finish, switch back to responding if the turn is still active
-    if (activeToolCount === 0 && (mode === "tool-use" || mode === "tool-input") && turnActive) {
-      setMode("responding");
-    }
+    if (activeToolCount === 0) setMode("requesting");
   });
 
-  pi.on("turn_end", async (_event, ctx) => {
+  // Pi removes its working loader at agent_end; a retry/continuation restarts us
+  // via agent_start. The run (verb, clock, totals) only ends at agent_settled.
+  pi.on("agent_end", async (event, ctx) => {
+    stopClock();
+    if (!runActive) return;
+    const last = [...event.messages].reverse().find((m) => m.role === "assistant") as AssistantTokenMessage | undefined;
+    if (last) runOutcome = outcomeFromStopReason(last.stopReason);
+    try {
+      if (ctx.signal?.aborted) runOutcome = "aborted";
+    } catch {}
+  });
+
+  pi.on("agent_settled", async (_event, ctx) => {
     ctx_ = ctx;
-    turnActive = false;
-    stopShimmer();
-
-    activeToolCount = 0;
-  });
-
-  pi.on("agent_end", async () => {
-    turnActive = false;
-    stopShimmer();
-
-    // Save elapsed before resetting turn state
-    const elapsed = Date.now() - (turnStart || agentStart || Date.now());
-
-    agentStart = 0;
-
-    if (ctx_?.ui) {
-      const done = COMPLETION_VERBS[Math.floor(Math.random() * COMPLETION_VERBS.length)];
-      const glyph = rgbAnsi(SAKURA, "✻");
-      const body = rgbAnsi(MUTED, ` ${done} for ${formatDuration(elapsed)}`);
-      ctx_.ui.notify(`${glyph}${body}`, "success");
-    }
+    finishRun();
   });
 
   pi.on("session_shutdown", async () => {
-    turnActive = false;
-    stopShimmer();
+    stopClock();
+    runActive = false;
     ctx_ = null;
   });
 }
