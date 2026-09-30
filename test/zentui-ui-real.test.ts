@@ -30,7 +30,7 @@ test("PolishedEditor frames Pi's real Editor without reading private fields", ()
 	editor.setText("compare gpt-5 with OpenAI\n────────");
 	const lines = editor.render(50).map((line) => stripVTControlCharacters(line));
 	assert.ok(lines.some((line) => line.includes("compare gpt-5 with OpenAI")), lines.join("\n"));
-	assert.ok(lines.some((line) => line.includes("────────") && line.includes("▐")), "typed dashes stay content");
+	assert.ok(lines.some((line) => line.includes("────────") && line.includes(defaultConfig.icons.rail)), "typed dashes stay content");
 	assert.ok(lines.some((line) => /gpt-5\s+OpenAI\s+high/.test(line)));
 	assert.equal(lines.length, 7, lines.join("\n"));
 });

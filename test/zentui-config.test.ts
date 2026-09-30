@@ -27,14 +27,14 @@ test("defaults have a single source of truth", () => {
 	assert.equal(defaultConfig.projectRefreshIntervalMs, 60_000);
 	assert.equal(defaultConfig.footerFormat, "");
 	assert.equal(defaultConfig.icons.mode, "auto");
-	assert.equal(defaultConfig.icons.rail, "▐");
-	assert.equal(defaultConfig.icons.editorPrompt, "\u{f0734}");
+	assert.equal(defaultConfig.icons.rail, "│");
+	assert.equal(defaultConfig.icons.editorPrompt, "");
 	assert.equal(defaultConfig.animations.footerPulse, false);
 	assert.equal(defaultConfig.features.messageStyle, true);
 	assert.equal(defaultConfig.colors.editorThinkingMax, "bold #FF8FA3");
 	const ascii = mergeConfig({ icons: { mode: "ascii" } });
 	assert.equal(ascii.icons.rail, "|");
-	assert.equal(ascii.icons.editorPrompt, ">");
+	assert.equal(ascii.icons.editorPrompt, "");
 });
 
 test("old configs with fixedEditor still load; the key is ignored", () => {
