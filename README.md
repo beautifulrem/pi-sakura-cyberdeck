@@ -22,8 +22,10 @@ No runtime dependencies; everything uses Pi’s public extension API except thre
 **Footer**
 
 ```text
-󰀵  project  on 󰘬 main   [███░░░░░░░] 4%/128k › ↑12k ↓1.4k › $0.06
+◆  project  on ⎇ main   [███░░░░░░░] 4%/128k › ↑12k ↓1.4k › $0.06
 ```
+
+> In the terminal, `◆` and `⎇` are Nerd Font icons (OS logo and git branch). Without a Nerd Font, set `icons.mode: "ascii"`.
 
 - Context gauge: macaron gauge; context label **sky**, cost **peach**
 - Separators / cwd / os: sakura gradient accents
