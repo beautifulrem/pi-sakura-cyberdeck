@@ -2,7 +2,7 @@
 
 Sakura Macaron visual pack for [Pi](https://pi.dev).
 
-**v1.1.4** — cleaner thinking HUD and clickable fixed-cluster compatibility.
+**v1.1.6** — remove subscription-specific quota UI; preserve existing visual settings.
 
 ## What’s inside
 
@@ -12,7 +12,6 @@ Sakura Macaron visual pack for [Pi](https://pi.dev).
 | **Header** | Sakura→sky cyberdeck startup art |
 | **Matrix** | Pastel digital rain while working (optional; can conflict with shimmer) |
 | **Zentui** | Editor, prompt rails, Starship footer, fixed bottom editor |
-| **Dual-quota** | Codex + Grok remaining chips in the footer |
 | **Claude shimmer** | Working spinner with macaron sweep + effort HUD |
 
 ## Look (v1.1)
@@ -20,13 +19,12 @@ Sakura Macaron visual pack for [Pi](https://pi.dev).
 **Footer**
 
 ```text
-󰀵  project  on 󰘬 main   Codex ▕░·····▏  0% · in 1d · Grok ▕██····▏ 36% · in 5d   [███░░░░░░░] 4%/2m  $0.06
+󰀵  project  on 󰘬 main   [███░░░░░░░] 4%/2m  $0.06
 ```
 
 - Context bar: truecolor macaron gauge; label **sky** (not mint green)
 - Cost: **peach**
 - Separators / cwd / os: soft sakura gradient accents
-- Dual-quota: identity tints + `· in Nd` reset text
 
 **Working line**
 
@@ -79,6 +77,24 @@ Then `/settings` → **sakura-macaron**. Restart Pi once.
 
 > Prefer **this package’s shimmer** over stock `npm:pi-claude-shimmer`, and turn off `sakura-matrix` if both fight for the working indicator.
 
+### Updating from older versions
+
+For an unpinned Git installation:
+
+```bash
+pi update git:github.com/beautifulrem/pi-sakura-cyberdeck
+```
+
+Restart Pi after updating. Pi does not push package updates automatically. Users who pinned a tag or commit must explicitly select the new version:
+
+```bash
+pi install git:github.com/beautifulrem/pi-sakura-cyberdeck@v1.1.6
+```
+
+Existing theme and Zentui settings are preserved. Old quota placement settings and quota cache files are harmless and do not need to be deleted. `/dual-usage` has been removed. If you manually added a separate path to `extensions/dual-quota/index.ts` in your Pi settings, remove that entry before updating; normal package installations do not need this step.
+
+For Pi 0.84+, old `fixedEditor.enabled: true` settings remain runtime-blocked; use the native fullscreen mode described below instead.
+
 ### Pi 0.84+ sticky editor
 
 Pi 0.84 introduced a native fullscreen TUI with a sticky editor. This pack’s experimental **fixed editor** compositor patches private TUI APIs and is **off by default** from v1.1.5; it is also hard-blocked at runtime on Pi 0.84+ layouts even if re-enabled in config.
@@ -118,7 +134,6 @@ Recommended companion settings (optional, user-owned):
 /zentui                         editor/footer settings
 /sakura-matrix                 rain status
 /sakura-matrix on|off
-/dual-usage                    refresh Codex+Grok quotas
 ```
 
 ## Conflicts
@@ -126,6 +141,10 @@ Recommended companion settings (optional, user-owned):
 Avoid stacking with `pi-zentui`, `pi-powerline-footer`, `@tifan/pi-fixed-editor`, stock `pi-claude-shimmer`, or a second copy of this pack. They share footer / working / editor surfaces.
 
 ## Changelog
+
+### 1.1.6
+
+- Remove the Codex/Grok subscription quota component, including footer chips, API polling, caching, and the `/dual-usage` command.
 
 ### 1.1.5
 
@@ -173,4 +192,4 @@ Avoid stacking with `pi-zentui`, `pi-powerline-footer`, `@tifan/pi-fixed-editor`
 
 ## License
 
-MIT. Bundled dual-quota is original to this pack. Claude shimmer is a sakura-themed fork of [pi-claude-shimmer](https://github.com/ouzhenkun/pi-claude-shimmer) (MIT).
+MIT. Claude shimmer is a sakura-themed fork of [pi-claude-shimmer](https://github.com/ouzhenkun/pi-claude-shimmer) (MIT).

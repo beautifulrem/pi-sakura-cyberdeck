@@ -301,7 +301,6 @@ export const defaultConfig: PolishedTuiConfig = {
 	extensionStatuses: {
 		defaultPlacement: "right",
 		placements: {
-			"dual-subscription-quota": "left",
 			"codex-goal": "middle",
 			"xai-usage": "right",
 		},
