@@ -393,7 +393,7 @@ export function parseFormatCommand(args: string): { value: string | undefined } 
 
 	const unquoted =
 		rest.startsWith('"') && rest.endsWith('"') && rest.length >= 2 ? rest.slice(1, -1) : rest;
-	return { value: unquoted };
+	return { value: unquoted === "" ? undefined : unquoted };
 }
 
 function argumentCompletions(prefix: string): AutocompleteItem[] | null {

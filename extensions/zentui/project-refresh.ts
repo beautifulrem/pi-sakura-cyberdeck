@@ -153,7 +153,7 @@ export function planProjectProbes(config: PolishedTuiConfig): ProjectProbePlan {
 				duration: segments.sessionDuration,
 			};
 	const git: ReadGitStatusOptions = {
-		readStatus: visible.status || visible.commit,
+		readStatus: visible.status || visible.commit || visible.tag,
 		readState: visible.state,
 		readExactTag: visible.tag || (visible.commit && config.gitCommit.showTag),
 		readMetrics: visible.metrics,

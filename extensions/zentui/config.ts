@@ -466,7 +466,9 @@ function normalizeUiFeatures(record: Record<string, unknown>): UiFeaturesConfig 
 		editor: booleanValue(record, "editor"),
 		statusLine: booleanValue(record, "statusLine"),
 		copyFriendly: booleanValue(record, "copyFriendly"),
-		messageStyle: booleanValue(record, "messageStyle"),
+		// Absent in ≤1.1.6 configs, where message styling was tied to the editor switch.
+		messageStyle:
+			typeof record.messageStyle === "boolean" ? record.messageStyle : booleanValue(record, "editor"),
 	};
 }
 
@@ -757,6 +759,8 @@ export type ConfigLoadResult = {
 	problem?: string;
 	/** The file still enables the removed fixed-editor feature. */
 	legacyFixedEditorEnabled: boolean;
+	/** Any obsolete `fixedEditor` block is present (cleaned up silently unless it was enabled). */
+	hasLegacyFixedEditor: boolean;
 };
 
 function describeError(error: unknown): string {
@@ -770,12 +774,14 @@ export function loadConfigWithDiagnostics(path = configPath): ConfigLoadResult {
 			config: mergeConfig({}),
 			problem: `${path}: ${describeError(state.error)}`,
 			legacyFixedEditorEnabled: false,
+			hasLegacyFixedEditor: false,
 		};
 	}
 	const legacy = state.record.fixedEditor;
 	return {
 		config: mergeConfig(state.record),
 		legacyFixedEditorEnabled: isRecord(legacy) && legacy.enabled === true,
+		hasLegacyFixedEditor: legacy !== undefined,
 	};
 }
 
