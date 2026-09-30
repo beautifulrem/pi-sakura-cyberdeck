@@ -1,7 +1,7 @@
 {
   "name": "pi-sakura-cyberdeck",
-  "version": "1.1.6",
-  "description": "Sakura Macaron visual pack for Pi: theme, cyberdeck header, matrix rain, macaron Zentui chrome, Claude-style shimmer.",
+  "version": "1.2.0",
+  "description": "Lightweight Sakura Macaron visual pack for Pi: theme, cyberdeck header, macaron Zentui chrome, Claude-style shimmer, optional matrix rain.",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -15,8 +15,8 @@
     "extensions",
     "themes",
     "licenses",
-    "scripts",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "NOTICE"
   ],
@@ -24,7 +24,7 @@
     "check": "node scripts/check.mjs",
     "dev:setup": "node scripts/dev-setup.mjs",
     "typecheck": ".dev/node_modules/.bin/tsc -p tsconfig.json",
-    "test": "node --import ./test/register.mjs --test \"test/**/*.test.ts\"",
+    "test": "node --experimental-transform-types --no-warnings --import ./test/register.mjs --test \"test/**/*.test.ts\"",
     "verify": "npm run check && npm run typecheck && npm test",
     "pack:check": "npm pack --dry-run"
   },
@@ -37,7 +37,8 @@
       "./extensions/header/index.ts",
       "./extensions/matrix/index.ts",
       "./extensions/zentui/index.ts",
-      "./extensions/claude-shimmer/index.ts"
+      "./extensions/claude-shimmer/index.ts",
+      "./extensions/changelog/index.ts"
     ],
     "themes": [
       "./themes/sakura-macaron.json"
