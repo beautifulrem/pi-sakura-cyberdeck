@@ -1,231 +1,86 @@
-import { type Theme, type ThemeColor, UserMessageComponent } from "@earendil-works/pi-coding-agent";
-import {
-	Markdown,
-	type MarkdownTheme,
-	truncateToWidth,
-	visibleWidth,
-} from "@earendil-works/pi-tui";
+import { type Theme, UserMessageComponent } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import { getColorMode, paintFg, type RGB } from "../shared/color";
 import type { PolishedTuiConfig } from "./config";
+import { renderSakuraFrameGradient } from "./gradient";
 import { installPrototypePatch } from "./prototype-patch-registry";
-import { renderSakuraFrameGradient, renderSakuraSolid } from "./gradient";
 
-const OSC133_ZONE_START = "\x1b]133;A\x07";
-const OSC133_ZONE_END = "\x1b]133;B\x07";
-const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
-
-type PatchableUserMessagePrototype = {
-	children?: unknown[];
-};
+/**
+ * User prompt chrome: gradient hairlines above/below plus a sakura rail on the left.
+ *
+ * The message body is Pi's own UserMessageComponent render (markdown options, extension
+ * markdown transformers, outputPad, OSC 133 prompt markers) at the reduced width, passed through
+ * byte-for-byte. Copy-friendly mode drops the rail so copied text has no extra glyphs.
+ */
 
 type Cleanup = () => void;
 
-type UserMessageRenderCache = {
-	hasMarkdownText: boolean;
-	text?: string;
-	width?: number;
-	theme?: Theme;
-	configKey?: string;
-	renderedLines?: string[];
+type UserMessageCard = {
+	width: number;
+	chromeKey: string;
+	inner: readonly string[];
+	lines: string[];
 };
 
-const userMessageRenderCache = new WeakMap<object, UserMessageRenderCache>();
+const RAIL_RGB: RGB = [242, 167, 198];
+const MIN_WIDTH = 8;
 
-function isObject(value: unknown): value is object {
-	return (typeof value === "object" && value !== null) || typeof value === "function";
+function sameLines(a: readonly string[], b: readonly string[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+	return true;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+function railFor(config: PolishedTuiConfig | undefined): { text: string; columns: number } {
+	if (!config || config.features?.copyFriendly) return { text: "", columns: 0 };
+	const glyph = typeof config.icons?.rail === "string" ? config.icons.rail : "▐";
+	// Control characters would corrupt the row; fall back to the default glyph.
+	const safe = /[\u0000-\u001f\u007f-\u009f]/.test(glyph) || visibleWidth(glyph) > 2 ? "▐" : glyph;
+	const text = `${safe} `;
+	return { text, columns: visibleWidth(text) };
 }
 
-function findMarkdownText(value: unknown): string | undefined {
-	if (!isRecord(value)) return undefined;
-	if (typeof value.text === "string") return value.text;
-
-	const children = value.children;
-	if (!Array.isArray(children)) return undefined;
-
-	for (const child of children) {
-		const text = findMarkdownText(child);
-		if (text !== undefined) return text;
-	}
-
-	return undefined;
-}
-
-function getCachedMarkdownText(instance: object): string | undefined {
-	const cached = userMessageRenderCache.get(instance);
-	if (cached?.hasMarkdownText) return cached.text;
-
-	const text = findMarkdownText(instance);
-	if (text !== undefined) {
-		userMessageRenderCache.set(instance, { ...cached, hasMarkdownText: true, text });
-	}
-	return text;
-}
-
-function getUserMessageConfigKey(config: PolishedTuiConfig): string {
-	return [
-		config.features.copyFriendly ? "copy" : "chrome",
-		config.colorSources.userMessages,
-		config.colors.editorAccent ?? "",
-		config.colors.editorBorder ?? "",
-		config.icons.rail,
-	].join("\0");
-}
-
-function themeFg(theme: Theme | undefined, color: ThemeColor, text: string): string {
-	if (!theme) return text;
-	try {
-		return theme.fg(color, text);
-	} catch {
-		return text;
-	}
-}
-
-function makeMarkdownTheme(theme: Theme | undefined): MarkdownTheme {
-	return {
-		heading: (text) => themeFg(theme, "mdHeading", text),
-		link: (text) => themeFg(theme, "mdLink", text),
-		linkUrl: (text) => themeFg(theme, "mdLinkUrl", text),
-		code: (text) => themeFg(theme, "mdCode", text),
-		codeBlock: (text) => themeFg(theme, "mdCodeBlock", text),
-		codeBlockBorder: (text) => themeFg(theme, "mdCodeBlockBorder", text),
-		quote: (text) => themeFg(theme, "mdQuote", text),
-		quoteBorder: (text) => themeFg(theme, "mdQuoteBorder", text),
-		hr: (text) => themeFg(theme, "mdHr", text),
-		listBullet: (text) => themeFg(theme, "mdListBullet", text),
-		bold: (text) => (theme ? theme.bold(text) : text),
-		italic: (text) => (theme ? theme.italic(text) : text),
-		underline: (text) => (theme ? theme.underline(text) : text),
-		strikethrough: (text) => (theme ? theme.strikethrough(text) : text),
-	};
-}
-
-function fillLine(content: string, width: number): string {
-	const truncated = truncateToWidth(content, Math.max(0, width), "");
-	const pad = " ".repeat(Math.max(0, width - visibleWidth(truncated)));
-	return `${truncated}${pad}`;
-}
-
-function renderPromptBoxRail(theme: Theme | undefined, config: PolishedTuiConfig): string {
-	if (config.features.copyFriendly) return "";
-	const railGlyph = config.icons.rail;
-	// Solid sakura rail — matches frame ends (not linear sky on the right).
-	return `${renderSakuraSolid(railGlyph)} `;
-}
-
-function renderPromptBoxLine(
-	line: string,
-	width: number,
-	theme: Theme | undefined,
-	config: PolishedTuiConfig,
-): string {
-	if (width <= 0) return "";
-	const rail = renderPromptBoxRail(theme, config);
-	const contentWidth = Math.max(0, width - visibleWidth(rail));
-	const content = config.features.copyFriendly
-		? truncateToWidth(line, contentWidth, "")
-		: fillLine(line, contentWidth);
-	return truncateToWidth(`${rail}${content}`, width, "");
-}
-
-function renderZentuiUserMessage(
-	instance: PatchableUserMessagePrototype,
-	width: number,
-	theme: Theme | undefined,
-	config: PolishedTuiConfig,
-): string[] | undefined {
-	if (!isRecord(instance)) return undefined;
-
-	const text = getCachedMarkdownText(instance);
-	if (text === undefined) return undefined;
-	if (width <= 0) return [""];
-
-	const configKey = getUserMessageConfigKey(config);
-	const cached = userMessageRenderCache.get(instance);
-	if (
-		cached?.hasMarkdownText &&
-		cached.width === width &&
-		cached.theme === theme &&
-		cached.configKey === configKey &&
-		cached.renderedLines
-	) {
-		return cached.renderedLines;
-	}
-
-	const railWidth = visibleWidth(renderPromptBoxRail(theme, config));
-	const contentWidth = Math.max(1, width - railWidth);
-	const renderer = new Markdown(text, 0, 0, makeMarkdownTheme(theme), {
-		color: (content) => themeFg(theme, "userMessageText", content),
-	});
-	const body = renderer.render(contentWidth);
-	const contentLines = body.length > 0 ? body : [""];
+export function renderUserMessageCard(inner: readonly string[], width: number, rail: string): string[] {
 	const border = renderSakuraFrameGradient("─".repeat(width));
-	const lines = [
-		truncateToWidth(border, width, ""),
-		renderPromptBoxLine("", width, theme, config),
-		...contentLines.map((line) => renderPromptBoxLine(line, width, theme, config)),
-		renderPromptBoxLine("", width, theme, config),
-		truncateToWidth(border, width, ""),
-	];
-
-	userMessageRenderCache.set(instance, {
-		hasMarkdownText: true,
-		text,
-		width,
-		theme,
-		configKey,
-		renderedLines: lines,
-	});
+	const lines: string[] = [border];
+	for (const line of inner) lines.push(rail ? `${rail}${line}` : line);
+	lines.push(border);
 	return lines;
 }
 
-function withPromptZoneMarkers(lines: string[]): string[] {
-	const markedLines = [...lines];
-	markedLines[0] = OSC133_ZONE_START + markedLines[0];
-	markedLines[markedLines.length - 1] =
-		OSC133_ZONE_END + OSC133_ZONE_FINAL + markedLines[markedLines.length - 1];
-	return markedLines;
-}
-
 export function installUserMessageStyle(
-	getTheme: () => Theme | undefined,
-	getConfig: () => PolishedTuiConfig,
+	_getTheme?: () => Theme | undefined,
+	getConfig?: () => PolishedTuiConfig,
 ): Cleanup {
-	const prototype = UserMessageComponent.prototype;
-	const cleanupInvalidate = installPrototypePatch(
-		prototype,
-		"invalidate",
-		"user-message-invalidate",
-		({ predecessor, receiver, args }) => {
-			if (isObject(receiver)) userMessageRenderCache.delete(receiver);
-			return Reflect.apply(predecessor, receiver, args);
-		},
-	);
-	const cleanupRender = installPrototypePatch(
-		prototype,
+	const cards = new WeakMap<object, UserMessageCard>();
+	return installPrototypePatch(
+		UserMessageComponent.prototype,
 		"render",
 		"user-message-render",
 		({ predecessor, receiver, args }) => {
 			const width = args[0];
-			if (typeof width !== "number") return Reflect.apply(predecessor, receiver, args);
-			const lines = renderZentuiUserMessage(
-				receiver as PatchableUserMessagePrototype,
-				width,
-				getTheme(),
-				getConfig(),
-			);
-			if (!lines) return Reflect.apply(predecessor, receiver, args);
-			if (lines.length === 0) return lines;
-			return withPromptZoneMarkers(lines);
+			if (typeof width !== "number" || width < MIN_WIDTH) {
+				return Reflect.apply(predecessor, receiver, args);
+			}
+			const rail = railFor(getConfig?.());
+			const inner = Reflect.apply(predecessor, receiver, [width - rail.columns, ...args.slice(1)]);
+			if (!Array.isArray(inner) || inner.length === 0) return inner;
+
+			const lines = inner as string[];
+			const colorMode = getColorMode();
+			const chromeKey = `${rail.text}\0${colorMode}`;
+			const cached = cards.get(receiver as object);
+			if (
+				cached &&
+				cached.width === width &&
+				cached.chromeKey === chromeKey &&
+				sameLines(cached.inner, lines)
+			) {
+				return cached.lines;
+			}
+			const card = renderUserMessageCard(lines, width, rail.text ? paintFg(RAIL_RGB, rail.text) : "");
+			cards.set(receiver as object, { width, chromeKey, inner: lines, lines: card });
+			return card;
 		},
 	);
-	let cleaned = false;
-	return () => {
-		if (cleaned) return;
-		cleaned = true;
-		cleanupRender();
-		cleanupInvalidate();
-	};
 }
