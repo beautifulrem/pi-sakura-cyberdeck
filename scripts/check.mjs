@@ -1,87 +1,82 @@
+// Package-level sanity checks (manifest, shipped files, theme, changelog).
+// Behavior is covered by the unit tests in test/ (`npm test`).
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { access, readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const manifest = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
+const read = (path) => readFile(resolve(root, path), "utf8");
+const exists = (path) => access(resolve(root, path)).then(() => true, () => false);
+const manifest = JSON.parse(await read("package.json"));
 
 assert.equal(manifest.name, "pi-sakura-cyberdeck");
-assert.equal(manifest.keywords.includes("pi-package"), true);
+assert.ok(manifest.keywords.includes("pi-package"));
+assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
 
-// Subscription quota functionality must not be shipped or loaded.
+// Host packages are provided by Pi: peer "*" only, never bundled.
+const HOST = ["@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "@earendil-works/pi-ai", "@earendil-works/pi-agent-core", "typebox"];
+for (const name of Object.keys(manifest.dependencies ?? {})) {
+	assert.ok(!HOST.includes(name), `host package ${name} must not be a dependency`);
+}
+assert.deepEqual(Object.keys(manifest.dependencies ?? {}), [], "the pack ships without runtime dependencies");
+assert.equal(manifest.devDependencies, undefined, "dev tooling lives in .dev/ (npm run dev:setup)");
+
+// Every declared resource exists; removed components stay removed.
+for (const path of [...manifest.pi.extensions, ...manifest.pi.themes]) assert.ok(await exists(path), `missing ${path}`);
 assert.equal(manifest.pi.extensions.some((path) => path.includes("dual-quota")), false);
-await assert.rejects(access(resolve(root, "extensions/dual-quota")), { code: "ENOENT" });
+assert.equal(await exists("extensions/dual-quota"), false);
+assert.equal(await exists("extensions/zentui/fixed-editor"), false, "fixed editor was removed in 1.2.0");
 
-for (const path of [...manifest.pi.extensions, ...manifest.pi.themes]) {
-  await access(resolve(root, path));
+// Every imported host package is declared as a peer.
+async function listTs(dir) {
+	const out = [];
+	for (const entry of await readdir(resolve(root, dir), { withFileTypes: true })) {
+		const rel = `${dir}/${entry.name}`;
+		if (entry.isDirectory()) out.push(...(await listTs(rel)));
+		else if (entry.name.endsWith(".ts")) out.push(rel);
+	}
+	return out;
+}
+for (const file of await listTs("extensions")) {
+	const source = await read(file);
+	for (const [, spec] of source.matchAll(/from\s+"([^".][^"]*)"/g)) {
+		if (spec.startsWith("node:")) continue;
+		assert.ok(spec in (manifest.peerDependencies ?? {}), `${file} imports undeclared package ${spec}`);
+	}
 }
 
-const theme = JSON.parse(await readFile(resolve(root, "themes/sakura-macaron.json"), "utf8"));
-const requiredColors = [
-  "accent", "border", "borderAccent", "borderMuted", "success", "error", "warning",
-  "muted", "dim", "text", "thinkingText", "selectedBg", "userMessageBg",
-  "userMessageText", "customMessageBg", "customMessageText", "customMessageLabel",
-  "toolPendingBg", "toolSuccessBg", "toolErrorBg", "toolTitle", "toolOutput", "mdHeading",
-  "mdLink", "mdLinkUrl", "mdCode", "mdCodeBlock", "mdCodeBlockBorder", "mdQuote",
-  "mdQuoteBorder", "mdHr", "mdListBullet", "toolDiffAdded", "toolDiffRemoved",
-  "toolDiffContext", "syntaxComment", "syntaxKeyword", "syntaxFunction", "syntaxVariable",
-  "syntaxString", "syntaxNumber", "syntaxType", "syntaxOperator", "syntaxPunctuation",
-  "thinkingOff", "thinkingMinimal", "thinkingLow", "thinkingMedium", "thinkingHigh",
-  "thinkingXhigh", "bashMode",
-];
+// Shipped files: runtime resources + docs only.
+for (const entry of ["extensions", "themes", "licenses", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE"]) {
+	assert.ok(manifest.files.includes(entry), `files must include ${entry}`);
+}
+for (const devOnly of ["scripts", "test", ".dev", "tsconfig.json"]) {
+	assert.ok(!manifest.files.includes(devOnly), `files must not ship ${devOnly}`);
+}
 
+// Theme: every required Pi color is present.
+const theme = JSON.parse(await read("themes/sakura-macaron.json"));
+const requiredColors = [
+	"accent", "border", "borderAccent", "borderMuted", "success", "error", "warning",
+	"muted", "dim", "text", "thinkingText", "selectedBg", "userMessageBg",
+	"userMessageText", "customMessageBg", "customMessageText", "customMessageLabel",
+	"toolPendingBg", "toolSuccessBg", "toolErrorBg", "toolTitle", "toolOutput", "mdHeading",
+	"mdLink", "mdLinkUrl", "mdCode", "mdCodeBlock", "mdCodeBlockBorder", "mdQuote",
+	"mdQuoteBorder", "mdHr", "mdListBullet", "toolDiffAdded", "toolDiffRemoved",
+	"toolDiffContext", "syntaxComment", "syntaxKeyword", "syntaxFunction", "syntaxVariable",
+	"syntaxString", "syntaxNumber", "syntaxType", "syntaxOperator", "syntaxPunctuation",
+	"thinkingOff", "thinkingMinimal", "thinkingLow", "thinkingMedium", "thinkingHigh",
+	"thinkingXhigh", "thinkingMax", "bashMode",
+];
 assert.equal(theme.name, "sakura-macaron");
 for (const color of requiredColors) assert.ok(color in theme.colors, `missing theme color: ${color}`);
 
-// Fixed-editor regression: when pinned cluster shrinks, rows above its new start
-// belong to transcript. paintCluster runs after transcript output and must not clear them.
-const compositor = await readFile(
-  resolve(root, "extensions/zentui/fixed-editor/compositor.ts"),
-  "utf8",
-);
-assert.match(compositor, /const clearStart = startRow;/);
-assert.doesNotMatch(
-  compositor,
-  /const clearStart = previous \? Math\.min\(previous\.startRow, startRow\)/,
-);
-const previousCluster = { startRow: 34, lineCount: 7 };
-const nextCluster = { startRow: 37, lineCount: 4 };
-const clearEnd = Math.max(
-  previousCluster.startRow + previousCluster.lineCount - 1,
-  nextCluster.startRow + nextCluster.lineCount - 1,
-);
-const postPaintClears = Array.from(
-  { length: clearEnd - nextCluster.startRow + 1 },
-  (_, index) => nextCluster.startRow + index,
-);
-assert.deepEqual(postPaintClears, [37, 38, 39, 40]);
-assert.equal(postPaintClears.some((row) => row >= 34 && row <= 36), false);
+// Changelog and README document the current version (the update notice reads CHANGELOG.md).
+const changelog = await read("CHANGELOG.md");
+const firstEntry = changelog.match(/^##\s+\[?v?(\d+\.\d+\.\d+)\]?/m)?.[1];
+assert.equal(firstEntry, manifest.version, "CHANGELOG.md must start with the package version");
+const readme = await read("README.md");
+assert.ok(readme.includes(`**v${manifest.version}**`), "README headline must mention the version");
+assert.ok(readme.includes(`### ${manifest.version}`), "README changelog must list the version");
 
-// Mouse ownership: transcript events stay here; fresh cluster clicks pass to widgets.
-assert.match(compositor, /mouseEv && this\.handleMouseEvent\(mouseEv\)/);
-assert.match(compositor, /if \(!this\.selection\.isDragging\) return false;/);
-assert.match(compositor, /if \(ev\.action === "release"\) \{\s*this\.selection\.clear\(\);/);
-
-// HUD keeps one useful clock: total turn time, not a transient duplicate thought timer.
-const shimmer = await readFile(resolve(root, "extensions/claude-shimmer/index.ts"), "utf8");
-assert.doesNotMatch(shimmer, /thinkingDuration|THOUGHT_DISPLAY_MS|thoughtTimer/);
-assert.match(shimmer, /parts\.push\(rgbAnsi\(MUTED, formatDigital\(elapsed\)\)\)/);
-
-// Pi 0.84+: fixed editor must stay off by default and hard-block native sticky TUI layouts.
-const zentuiConfig = await readFile(resolve(root, "extensions/zentui/config.ts"), "utf8");
-assert.doesNotMatch(zentuiConfig, /dual-subscription-quota/);
-assert.match(
-  zentuiConfig,
-  /fixedEditor:\s*\{\s*\/\/[\s\S]*?enabled:\s*false|fixedEditor:\s*\{\s*enabled:\s*false/,
-);
-const fixedEditorIndex = await readFile(
-  resolve(root, "extensions/zentui/fixed-editor/index.ts"),
-  "utf8",
-);
-assert.match(fixedEditorIndex, /function isNativeStickyEditorPi/);
-assert.match(fixedEditorIndex, /Hard block on Pi 0\.84\+/);
-assert.match(fixedEditorIndex, /if \(isNativeStickyEditorPi\(tui\)\)/);
-assert.equal(manifest.version, "1.1.6");
-
-console.log("pi-sakura-cyberdeck package check passed");
+console.log(`pi-sakura-cyberdeck ${manifest.version} package check passed`);
