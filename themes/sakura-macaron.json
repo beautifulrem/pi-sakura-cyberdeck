@@ -4,14 +4,12 @@
   "vars": {
     "bg": "#14111A",
     "surface": "#1E1826",
-    "surfaceSoft": "#251D2D",
     "surfaceRaised": "#2D2438",
     "text": "#F7EEF8",
     "textSoft": "#D8CADC",
     "muted": "#A99BAE",
-    "dim": "#716879",
+    "dim": "#877C8F",
     "sakura": "#F2A7C6",
-    "sakuraIro": "#FCC9B9",
     "petal": "#EFC3E6",
     "peach": "#F6BC9A",
     "lavender": "#C7B8F5",
@@ -20,7 +18,8 @@
     "butter": "#F3D98B",
     "coral": "#FF8FA3",
     "border": "#6E5878",
-    "borderMuted": "#493C53"
+    "borderMuted": "#54465F",
+    "plum": "#4A2E40"
   },
   "colors": {
     "accent": "sakura",
@@ -74,11 +73,15 @@
     "thinkingHigh": "sakura",
     "thinkingXhigh": "lavender",
     "thinkingMax": "coral",
-    "bashMode": "mint"
+    "bashMode": "mint",
+    "scrollbarTrack": "borderMuted",
+    "scrollbarThumb": "muted",
+    "searchMatchBg": "plum",
+    "searchMatchText": "butter"
   },
   "export": {
-    "pageBg": "#14111A",
-    "cardBg": "#1E1826",
-    "infoBg": "#2D2438"
+    "pageBg": "bg",
+    "cardBg": "surface",
+    "infoBg": "surfaceRaised"
   }
 }
