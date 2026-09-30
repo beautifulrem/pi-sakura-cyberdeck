@@ -7,16 +7,36 @@
  * variable (and nested group) renders empty.
  */
 
+type GroupToken = {
+	kind: "group";
+	tokens: FormatToken[];
+	/** Group holds at least one content variable or nested group (decided at parse time). */
+	hasContent: boolean;
+	/** Group holds only separator variables and whitespace text. */
+	onlySeparators: boolean;
+};
+
 export type FormatToken =
 	| { kind: "text"; value: string }
 	| { kind: "var"; name: string }
 	| { kind: "fill" }
-	| { kind: "group"; tokens: FormatToken[] };
+	| GroupToken;
 
-const TOKEN_REGEX = /\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}|\$([a-zA-Z_][a-zA-Z0-9_]*)/g;
+const TOKEN_REGEX = /\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}|\$([a-zA-Z_][a-zA-Z0-9_]*)/y;
 
 /**
- * Tokenize a format string into text/var/fill/group tokens.
+ * Separator vars only style gaps between content; they must not keep a group
+ * alive when every real content var is empty (e.g. `($sep$tokens)` drops if
+ * tokens is empty).
+ */
+const NON_CONTENT_VARS = new Set(["sep", "separator"]);
+
+const PARSE_CACHE_LIMIT = 8;
+const parseCache = new Map<string, FormatToken[]>();
+
+/**
+ * Tokenize a format string into text/var/fill/group tokens. Results are cached
+ * per format string, so calling this every frame is O(1) after the first parse.
  *
  * `$name` and `${name}` both produce a variable token. A variable named
  * `fill` becomes a fill token instead. Parentheses form conditional groups
@@ -24,16 +44,50 @@ const TOKEN_REGEX = /\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}|\$([a-zA-Z_][a-zA-Z0-9_]*)/g
  */
 export function parseFooterFormat(format: string): FormatToken[] {
 	if (!format) return [];
-	return parseTokenSlice(format, 0, format.length, true).tokens;
+	const cached = parseCache.get(format);
+	if (cached) return cached;
+	const tokens = parseTokenSlice(format, 0, true).tokens;
+	if (parseCache.size >= PARSE_CACHE_LIMIT) {
+		const oldest = parseCache.keys().next().value;
+		if (oldest !== undefined) parseCache.delete(oldest);
+	}
+	parseCache.set(format, tokens);
+	return tokens;
+}
+
+function makeGroup(tokens: FormatToken[]): GroupToken {
+	let hasContent = false;
+	let sawSeparator = false;
+	let onlySeparatorsAndSpace = true;
+	for (const child of tokens) {
+		if (child.kind === "group") {
+			hasContent = true;
+			onlySeparatorsAndSpace = false;
+		} else if (child.kind === "var") {
+			if (NON_CONTENT_VARS.has(child.name)) sawSeparator = true;
+			else {
+				hasContent = true;
+				onlySeparatorsAndSpace = false;
+			}
+		} else if (child.kind === "text" && child.value.trim() !== "") {
+			onlySeparatorsAndSpace = false;
+		}
+	}
+	return {
+		kind: "group",
+		tokens,
+		hasContent,
+		onlySeparators: sawSeparator && onlySeparatorsAndSpace,
+	};
 }
 
 function parseTokenSlice(
 	format: string,
 	start: number,
-	end: number,
 	topLevel = false,
 ): { tokens: FormatToken[]; nextIndex: number } {
 	const tokens: FormatToken[] = [];
+	const end = format.length;
 	let index = start;
 	let textStart = start;
 
@@ -48,8 +102,8 @@ function parseTokenSlice(
 
 		if (ch === "(") {
 			flushText(index);
-			const nested = parseTokenSlice(format, index + 1, end, false);
-			tokens.push({ kind: "group", tokens: nested.tokens });
+			const nested = parseTokenSlice(format, index + 1, false);
+			tokens.push(makeGroup(nested.tokens));
 			index = nested.nextIndex;
 			textStart = index;
 			continue;
@@ -69,21 +123,11 @@ function parseTokenSlice(
 		if (ch === "$") {
 			TOKEN_REGEX.lastIndex = index;
 			const match = TOKEN_REGEX.exec(format);
-			if (match && match.index === index && match.index < end) {
-				const full = match[0];
-				const matchEnd = match.index + full.length;
-				if (matchEnd > end) {
-					index += 1;
-					continue;
-				}
+			if (match) {
 				flushText(index);
 				const name = match[1] ?? match[2] ?? "";
-				if (name === "fill") {
-					tokens.push({ kind: "fill" });
-				} else {
-					tokens.push({ kind: "var", name });
-				}
-				index = matchEnd;
+				tokens.push(name === "fill" ? { kind: "fill" } : { kind: "var", name });
+				index += match[0].length;
 				textStart = index;
 				continue;
 			}
@@ -109,171 +153,130 @@ function parseTokenSlice(
  *
  * Text tokens contribute their `value` verbatim (unstyled/plain); var tokens
  * contribute `renderVariable(name)` (already styled by caller). No automatic
- * spaces are inserted — the user controls all spacing.
+ * spaces are inserted — the user controls all spacing. Every variable is
+ * rendered at most once per call.
  */
 export function renderFormatSplit(
 	tokens: FormatToken[],
 	renderVariable: (name: string) => string,
 ): { left: string; middle: string; right: string } {
-	const fillIndices = findTopLevelFillIndices(tokens);
-
-	if (fillIndices.length === 0) {
-		return {
-			left: renderTokenSlice(tokens, 0, tokens.length, renderVariable),
-			middle: "",
-			right: "",
-		};
+	const fills: number[] = [];
+	for (let index = 0; index < tokens.length && fills.length < 2; index++) {
+		if (tokens[index]?.kind === "fill") fills.push(index);
 	}
-
-	const first = fillIndices[0];
-	const second = fillIndices[1];
-
-	if (first === undefined) {
-		return {
-			left: renderTokenSlice(tokens, 0, tokens.length, renderVariable),
-			middle: "",
-			right: "",
-		};
-	}
-
+	const [first, second] = fills;
+	const slice = (start: number, end: number) =>
+		renderTokens(tokens, start, end, renderVariable).text;
+	if (first === undefined) return { left: slice(0, tokens.length), middle: "", right: "" };
 	if (second === undefined) {
-		return {
-			left: renderTokenSlice(tokens, 0, first, renderVariable),
-			middle: "",
-			right: renderTokenSlice(tokens, first + 1, tokens.length, renderVariable),
-		};
+		return { left: slice(0, first), middle: "", right: slice(first + 1, tokens.length) };
 	}
-
 	return {
-		left: renderTokenSlice(tokens, 0, first, renderVariable),
-		middle: renderTokenSlice(tokens, first + 1, second, renderVariable),
-		right: renderTokenSlice(tokens, second + 1, tokens.length, renderVariable),
+		left: slice(0, first),
+		middle: slice(first + 1, second),
+		right: slice(second + 1, tokens.length),
 	};
 }
 
-function findTopLevelFillIndices(tokens: FormatToken[]): number[] {
-	const fillIndices: number[] = [];
-	for (let index = 0; index < tokens.length; index++) {
-		if (tokens[index]?.kind === "fill") fillIndices.push(index);
-	}
-	return fillIndices;
-}
-
-function renderTokenSlice(
-	tokens: FormatToken[],
+/**
+ * Single pass: returns the rendered text plus whether any content variable or
+ * nested group in the range produced content (drives group visibility).
+ */
+function renderTokens(
+	tokens: readonly FormatToken[],
 	start: number,
 	end: number,
 	renderVariable: (name: string) => string,
-): string {
-	let result = "";
+): { text: string; hasVisibleContent: boolean } {
+	let text = "";
+	let hasVisibleContent = false;
 	for (let i = start; i < end; i++) {
 		const token = tokens[i];
-		if (!token) continue;
-		result += renderToken(token, renderVariable);
+		if (!token || token.kind === "fill") continue;
+		if (token.kind === "text") {
+			text += token.value;
+			continue;
+		}
+		if (token.kind === "var") {
+			const rendered = renderVariable(token.name);
+			text += rendered;
+			if (rendered !== "" && !NON_CONTENT_VARS.has(token.name)) hasVisibleContent = true;
+			continue;
+		}
+		const group = renderGroup(token, renderVariable);
+		if (group !== undefined) {
+			text += group;
+			hasVisibleContent = true;
+		}
 	}
-	return result;
-}
-
-function renderToken(token: FormatToken, renderVariable: (name: string) => string): string {
-	if (token.kind === "text") return token.value;
-	if (token.kind === "var") return renderVariable(token.name);
-	if (token.kind === "fill") return "";
-	// group
-	const rendered = token.tokens.map((child) => renderToken(child, renderVariable)).join("");
-	if (isGroupEmpty(token, renderVariable)) return "";
-	return rendered;
+	return { text, hasVisibleContent };
 }
 
 /**
- * Separator vars only style gaps between content; they must not keep a group
- * alive when every real content var is empty (e.g. `($sep$tokens)` drops if
- * tokens is empty).
+ * A group is dropped iff it has content vars/groups and none of them rendered,
+ * or it holds nothing but `$sep` and whitespace. Text-only groups always show.
+ * Returns `undefined` when the group is dropped.
  */
-const NON_CONTENT_VARS = new Set(["sep", "separator"]);
-
-/**
- * A group is empty iff every content var leaf is empty and every nested group
- * is empty. Text-only groups (no vars) always show. `$sep` / `$separator` are
- * ignored for emptiness so orphan themed pipes do not force a group to render.
- */
-function isGroupEmpty(
-	group: FormatToken & { kind: "group" },
+function renderGroup(
+	group: GroupToken,
 	renderVariable: (name: string) => string,
-): boolean {
-	let sawContentVarOrGroup = false;
-	for (const child of group.tokens) {
-		if (child.kind === "var") {
-			if (NON_CONTENT_VARS.has(child.name)) continue;
-			sawContentVarOrGroup = true;
-			if (renderVariable(child.name) !== "") return false;
-		} else if (child.kind === "group") {
-			sawContentVarOrGroup = true;
-			if (!isGroupEmpty(child, renderVariable)) return false;
-		}
-	}
-	// Text-only groups (or groups with only $sep) are shown only when no content vars.
-	// Groups that only contain $sep still count as empty so they drop.
-	return sawContentVarOrGroup || groupOnlyNonContentVars(group);
-}
-
-function groupOnlyNonContentVars(group: FormatToken & { kind: "group" }): boolean {
-	let sawSep = false;
-	for (const child of group.tokens) {
-		if (child.kind === "text") {
-			if (child.value.trim() !== "") return false;
-			continue;
-		}
-		if (child.kind === "var") {
-			if (!NON_CONTENT_VARS.has(child.name)) return false;
-			sawSep = true;
-			continue;
-		}
-		if (child.kind === "group") return false;
-		if (child.kind === "fill") continue;
-	}
-	return sawSep;
+): string | undefined {
+	if (group.onlySeparators) return undefined;
+	const inner = renderTokens(group.tokens, 0, group.tokens.length, renderVariable);
+	if (group.hasContent && !inner.hasVisibleContent) return undefined;
+	return inner.text;
 }
 
 /** One optional SGR sequence (`\x1b[…m`). */
 const ANSI_ONE_SRC = "\u001b\\[[0-9;]*m";
+const ANSI_ONE_GLOBAL = new RegExp(ANSI_ONE_SRC, "g");
 
-/**
- * One ` | ` separator unit, plain or with a single ANSI wrapper on either side
- * of the spaces/pipe (matches `renderStyle(..., " | ")` output).
- */
-const SEP_UNIT_SRC = `(?:${ANSI_ONE_SRC})?\\s+\\|\\s+(?:${ANSI_ONE_SRC})?`;
+type SeparatorPatterns = { consecutive: RegExp; leading: RegExp; trailing: RegExp };
+const separatorPatternCache = new Map<string, SeparatorPatterns | undefined>();
 
-/**
- * Join non-empty parts with a separator (segment-mode style).
- * Useful when building right-side metrics without orphan pipes.
- */
-export function joinNonEmpty(parts: string[], separator: string): string {
-	return parts.filter(Boolean).join(separator);
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function separatorPatterns(glyph: string): SeparatorPatterns | undefined {
+	if (separatorPatternCache.has(glyph)) return separatorPatternCache.get(glyph);
+	// Always treat the classic pipe as a separator too (custom format text often uses it).
+	const glyphs = [...new Set(["|", glyph.trim()].filter(Boolean))].map(escapeRegExp);
+	// One separator unit: plain or with a single ANSI wrapper on either side of the
+	// spaced glyph (matches `renderStyle(..., " › ")` output).
+	const unit = `(?:${ANSI_ONE_SRC})?\\s+(?:${glyphs.join("|")})\\s+(?:${ANSI_ONE_SRC})?`;
+	const patterns = {
+		consecutive: new RegExp(`(${unit})(?:${unit})+`, "g"),
+		leading: new RegExp(`^(?:${unit})+`),
+		trailing: new RegExp(`(?:${unit})+$`),
+	};
+	separatorPatternCache.set(glyph, patterns);
+	return patterns;
 }
 
 /**
  * Tidy a rendered format left/middle/right slice:
- * - collapse repeated pipe separators (plain or simple ANSI-wrapped) into one
- * - strip leading/trailing pipe separators
+ * - collapse repeated separators (plain or simple ANSI-wrapped) into one
+ * - strip leading/trailing separators
  * - strip leading/trailing whitespace
  * - drop slices that are only ANSI / whitespace after cleanup
+ *
+ * `separatorGlyph` is the active `$sep` glyph (e.g. `›`); `|` is always recognized.
  */
-export function stripOrphanSeparators(rendered: string): string {
+export function stripOrphanSeparators(rendered: string, separatorGlyph = "|"): string {
 	if (!rendered) return rendered;
-
-	// Collapse consecutive separator units, keeping the first (preserves themed color).
-	const consecutive = new RegExp(`(${SEP_UNIT_SRC})(?:${SEP_UNIT_SRC})+`, "g");
-	let result = rendered.replace(consecutive, "$1");
-
-	// Strip leading / trailing separator units.
-	result = result.replace(new RegExp(`^(?:${SEP_UNIT_SRC})+`), "");
-	result = result.replace(new RegExp(`(?:${SEP_UNIT_SRC})+$`), "");
-
+	let result = rendered;
+	const patterns = separatorPatterns(separatorGlyph);
+	if (patterns) {
+		// Collapse consecutive separator units, keeping the first (preserves themed color).
+		result = result
+			.replace(patterns.consecutive, "$1")
+			.replace(patterns.leading, "")
+			.replace(patterns.trailing, "");
+	}
 	// Strip leading / trailing plain whitespace left by empty groups.
-	result = result.replace(/^\s+/, "").replace(/\s+$/, "");
-
+	result = result.trim();
 	// Pure ANSI (or empty) leftovers are not useful content.
-	if (result.replace(new RegExp(ANSI_ONE_SRC, "g"), "").trim() === "") return "";
-
+	if (result.replace(ANSI_ONE_GLOBAL, "").trim() === "") return "";
 	return result;
 }

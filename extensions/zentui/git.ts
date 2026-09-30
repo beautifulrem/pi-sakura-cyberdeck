@@ -1,26 +1,19 @@
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { promisify } from "node:util";
+import { isAbsolute, join, resolve } from "node:path";
 
-const execFileAsync = promisify(execFile);
-const GIT_COMMAND_TIMEOUT_MS = 2_000;
-
-export type GitOperationState =
-	| "REBASING"
-	| "MERGING"
-	| "CHERRY-PICKING"
-	| "REVERTING"
-	| "BISECTING";
+const GIT_COMMAND_TIMEOUT_MS = 3_000;
+const GIT_MAX_BUFFER = 16 * 1024 * 1024;
+/** Never let the footer take git's index lock or run a repo-configured fsmonitor hook. */
+const GIT_BASE_ARGS = ["-c", "core.fsmonitor=false"] as const;
 
 /**
- * Starship `git_commit`-style info derived from the existing porcelain probe.
+ * Starship `git_commit`-style info derived from the porcelain probe.
  *
- * `oid` is the full `branch.oid` from `git status --porcelain=2 --branch`
- * (free — no extra git call). `detached` mirrors `branch.head === "(detached)"`.
- * `tag` is populated only when the caller opts into the exact-tag probe
- * (`readGitStatus({ readExactTag: true })`); `null` means no exact-match tag
- * or the probe was skipped.
+ * `oid` is the full `branch.oid` from `git status --porcelain=2 --branch`.
+ * `detached` mirrors `branch.head === "(detached)"`. `tag` is populated only
+ * when the caller opts into the exact-tag probe; `null` means no exact-match
+ * tag or the probe was skipped.
  */
 export type GitCommitInfo = {
 	oid: string | null;
@@ -39,7 +32,6 @@ export type GitMetricsInfo = {
 
 export type GitStatusSummary = {
 	branch?: string;
-	dirty: boolean;
 	ahead: number;
 	behind: number;
 	conflicted: number;
@@ -50,10 +42,11 @@ export type GitStatusSummary = {
 	renamed: number;
 	deleted: number;
 	typechanged: number;
-	gitState?: GitOperationState;
 	gitStateLabel?: string;
 	commit?: GitCommitInfo;
 	metrics?: GitMetricsInfo | null;
+	/** The last status probe failed (timeout, lock, crash): counts are unknown, not zero. */
+	gitUnavailable?: boolean;
 };
 
 export type GitReadResult =
@@ -62,12 +55,12 @@ export type GitReadResult =
 	| { kind: "error" };
 
 export type GitStatePaths = {
-	rebaseMerge?: string;
-	rebaseApply?: string;
-	mergeHead?: string;
-	cherryPickHead?: string;
-	revertHead?: string;
-	bisectLog?: string;
+	rebaseMerge?: boolean;
+	rebaseApply?: boolean;
+	mergeHead?: boolean;
+	cherryPickHead?: boolean;
+	revertHead?: boolean;
+	bisectLog?: boolean;
 	rebaseMsgnum?: string;
 	rebaseEnd?: string;
 };
@@ -75,7 +68,6 @@ export type GitStatePaths = {
 export function emptyGitStatus(): GitStatusSummary {
 	return {
 		branch: undefined,
-		dirty: false,
 		ahead: 0,
 		behind: 0,
 		conflicted: 0,
@@ -86,14 +78,19 @@ export function emptyGitStatus(): GitStatusSummary {
 		renamed: 0,
 		deleted: 0,
 		typechanged: 0,
-		gitState: undefined,
 		gitStateLabel: undefined,
 		commit: undefined,
 		metrics: undefined,
+		gitUnavailable: undefined,
 	};
 }
 
-export function parseGitStatusPorcelain(stdoutText: string, stashCount: number): GitStatusSummary {
+/**
+ * Parse `git status --porcelain=2 --branch [--show-stash]` output. The
+ * `# stash <n>` header (git ≥ 2.35) sets `stashed`; `stashCount` is used when
+ * the header is absent (older git, counted separately).
+ */
+export function parseGitStatusPorcelain(stdoutText: string, stashCount = 0): GitStatusSummary {
 	const status = emptyGitStatus();
 	status.stashed = stashCount;
 
@@ -103,33 +100,31 @@ export function parseGitStatusPorcelain(stdoutText: string, stashCount: number):
 
 	for (const line of stdoutText.split(/\r?\n/)) {
 		if (!line) continue;
-		if (line.startsWith("# branch.oid ")) {
-			const value = line.slice("# branch.oid ".length).trim();
-			if (value && value !== "(initial)") oid = value;
-			continue;
-		}
-		if (line.startsWith("# branch.head ")) {
-			sawBranchHead = true;
-			const branch = line.slice("# branch.head ".length).trim();
-			if (branch === "(detached)") {
-				detached = true;
-				status.branch = undefined;
-			} else if (branch) {
-				status.branch = branch;
+		if (line.startsWith("#")) {
+			if (line.startsWith("# branch.oid ")) {
+				const value = line.slice("# branch.oid ".length).trim();
+				if (value && value !== "(initial)") oid = value;
+			} else if (line.startsWith("# branch.head ")) {
+				sawBranchHead = true;
+				const branch = line.slice("# branch.head ".length).trim();
+				if (branch === "(detached)") {
+					detached = true;
+					status.branch = undefined;
+				} else if (branch) {
+					status.branch = branch;
+				}
+			} else if (line.startsWith("# branch.ab ")) {
+				const match = line.match(/\+(\d+)\s+-(\d+)/);
+				if (match) {
+					status.ahead = Number(match[1] ?? 0);
+					status.behind = Number(match[2] ?? 0);
+				}
+			} else if (line.startsWith("# stash ")) {
+				const count = Number(line.slice("# stash ".length).trim());
+				if (Number.isInteger(count) && count >= 0) status.stashed = count;
 			}
 			continue;
 		}
-		if (line.startsWith("# branch.ab ")) {
-			const match = line.match(/\+(\d+)\s+-(\d+)/);
-			if (match) {
-				status.ahead = Number(match[1] ?? 0);
-				status.behind = Number(match[2] ?? 0);
-			}
-			continue;
-		}
-		if (line.startsWith("#")) continue;
-
-		status.dirty = true;
 
 		if (line.startsWith("? ")) {
 			status.untracked += 1;
@@ -155,8 +150,7 @@ export function parseGitStatusPorcelain(stdoutText: string, stashCount: number):
 		else if (y === "T") status.typechanged += 1;
 	}
 
-	// Only populate commit info when we actually saw branch headers (inside
-	// a repo with commits). An unborn branch has no oid.
+	// Only populate commit info when we actually saw branch headers.
 	if (sawBranchHead) {
 		status.commit = { oid, detached, tag: null };
 	}
@@ -166,12 +160,7 @@ export function parseGitStatusPorcelain(stdoutText: string, stashCount: number):
 
 /**
  * Parse `git diff --numstat` output into aggregate added/deleted counts.
- *
- * Each line is `added\tdeleted\tpath` (or `added\tdeleted\told\tnew` for
- * renames). Binary rows carry `-` in both numeric columns and are skipped.
- * Malformed/unparseable lines are ignored rather than aborting the sum.
- *
- * See https://git-scm.com/docs/git-diff#Documentation/git-diff.txt---numstat
+ * Binary rows (`-`) and malformed lines are skipped.
  */
 export function parseGitNumstat(stdoutText: string): GitMetricsInfo {
 	let added = 0;
@@ -179,16 +168,13 @@ export function parseGitNumstat(stdoutText: string): GitMetricsInfo {
 	for (const line of stdoutText.split(/\r?\n/)) {
 		if (!line) continue;
 		const parts = line.split("\t");
-		// `added\tdeleted\tpath...` — need at least 3 tab-delimited fields.
 		if (parts.length < 3) continue;
 		const a = parts[0];
 		const d = parts[1];
-		// Binary files report `-` for both; skip.
 		if (a === "-" || d === "-") continue;
 		const na = Number(a);
 		const nd = Number(d);
-		if (!Number.isFinite(na) || !Number.isFinite(nd)) continue;
-		if (na < 0 || nd < 0) continue;
+		if (!Number.isFinite(na) || !Number.isFinite(nd) || na < 0 || nd < 0) continue;
 		added += na;
 		deleted += nd;
 	}
@@ -196,7 +182,7 @@ export function parseGitNumstat(stdoutText: string): GitMetricsInfo {
 }
 
 function readOptionalText(path: string | undefined): string | undefined {
-	if (!path || !existsSync(path)) return undefined;
+	if (!path) return undefined;
 	try {
 		return readFileSync(path, "utf8").trim();
 	} catch {
@@ -204,96 +190,108 @@ function readOptionalText(path: string | undefined): string | undefined {
 	}
 }
 
-/**
- * Pure git operation-state detector. Paths that exist (truthy strings that
- * callers verified with `existsSync`) select the active state in Starship order.
- */
-export function detectGitState(paths: GitStatePaths): {
-	gitState?: GitOperationState;
-	gitStateLabel?: string;
-} {
+/** Pure git operation-state detector (Starship order). */
+function detectGitState(paths: GitStatePaths): string | undefined {
 	if (paths.rebaseMerge || paths.rebaseApply) {
 		const msgnum = readOptionalText(paths.rebaseMsgnum);
 		const end = readOptionalText(paths.rebaseEnd);
-		if (msgnum && end) {
-			return { gitState: "REBASING", gitStateLabel: `REBASING ${msgnum}/${end}` };
-		}
-		return { gitState: "REBASING", gitStateLabel: "REBASING" };
+		return /^\d+$/.test(msgnum ?? "") && /^\d+$/.test(end ?? "")
+			? `REBASING ${msgnum}/${end}`
+			: "REBASING";
 	}
-	if (paths.mergeHead) return { gitState: "MERGING", gitStateLabel: "MERGING" };
-	if (paths.cherryPickHead) {
-		return { gitState: "CHERRY-PICKING", gitStateLabel: "CHERRY-PICKING" };
-	}
-	if (paths.revertHead) return { gitState: "REVERTING", gitStateLabel: "REVERTING" };
-	if (paths.bisectLog) return { gitState: "BISECTING", gitStateLabel: "BISECTING" };
-	return {};
+	if (paths.mergeHead) return "MERGING";
+	if (paths.cherryPickHead) return "CHERRY-PICKING";
+	if (paths.revertHead) return "REVERTING";
+	if (paths.bisectLog) return "BISECTING";
+	return undefined;
 }
 
-async function resolveGitPath(cwd: string, pathSpec: string): Promise<string | undefined> {
-	try {
-		const { stdout } = await execFileAsync("git", ["rev-parse", "--git-path", pathSpec], {
-			cwd,
-			timeout: GIT_COMMAND_TIMEOUT_MS,
-		});
-		const resolved = (typeof stdout === "string" ? stdout : String(stdout)).trim();
-		if (!resolved) return undefined;
-		return resolved.startsWith("/") ? resolved : join(cwd, resolved);
-	} catch {
-		return undefined;
-	}
-}
-
-async function readGitOperationState(cwd: string): Promise<{
-	gitState?: GitOperationState;
-	gitStateLabel?: string;
-}> {
-	const [rebaseMerge, rebaseApply, mergeHead, cherryPickHead, revertHead, bisectLog] =
-		await Promise.all([
-			resolveGitPath(cwd, "rebase-merge"),
-			resolveGitPath(cwd, "rebase-apply"),
-			resolveGitPath(cwd, "MERGE_HEAD"),
-			resolveGitPath(cwd, "CHERRY_PICK_HEAD"),
-			resolveGitPath(cwd, "REVERT_HEAD"),
-			resolveGitPath(cwd, "BISECT_LOG"),
-		]);
-
-	const existing = (path: string | undefined) => (path && existsSync(path) ? path : undefined);
-	const rebaseDir = existing(rebaseMerge) ?? existing(rebaseApply);
-
+/** Operation state from the (per-worktree) git dir using plain `existsSync` checks. */
+function readGitOperationState(gitDir: string): string | undefined {
+	const at = (name: string) => existsSync(join(gitDir, name));
+	const rebaseMerge = at("rebase-merge");
+	const rebaseApply = !rebaseMerge && at("rebase-apply");
+	const rebaseDir = rebaseMerge
+		? join(gitDir, "rebase-merge")
+		: rebaseApply
+			? join(gitDir, "rebase-apply")
+			: undefined;
 	return detectGitState({
-		rebaseMerge: existing(rebaseMerge),
-		rebaseApply: existing(rebaseApply),
-		mergeHead: existing(mergeHead),
-		cherryPickHead: existing(cherryPickHead),
-		revertHead: existing(revertHead),
-		bisectLog: existing(bisectLog),
-		rebaseMsgnum: rebaseDir ? join(rebaseDir, "msgnum") : undefined,
-		rebaseEnd: rebaseDir ? join(rebaseDir, "end") : undefined,
+		rebaseMerge,
+		rebaseApply,
+		mergeHead: at("MERGE_HEAD"),
+		cherryPickHead: at("CHERRY_PICK_HEAD"),
+		revertHead: at("REVERT_HEAD"),
+		bisectLog: at("BISECT_LOG"),
+		rebaseMsgnum: rebaseDir ? join(rebaseDir, rebaseMerge ? "msgnum" : "next") : undefined,
+		rebaseEnd: rebaseDir ? join(rebaseDir, rebaseMerge ? "end" : "last") : undefined,
+	});
+}
+
+type GitRunError = Error & { code?: unknown; stderr?: unknown };
+
+function runGit(cwd: string, args: readonly string[]): Promise<string> {
+	return new Promise((resolvePromise, reject) => {
+		execFile(
+			"git",
+			[...GIT_BASE_ARGS, ...args],
+			{
+				cwd,
+				timeout: GIT_COMMAND_TIMEOUT_MS,
+				maxBuffer: GIT_MAX_BUFFER,
+				windowsHide: true,
+				env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C", GIT_TERMINAL_PROMPT: "0" },
+			},
+			(error, stdout, stderr) => {
+				if (error) {
+					(error as GitRunError).stderr = stderr;
+					reject(error);
+					return;
+				}
+				resolvePromise(String(stdout));
+			},
+		);
 	});
 }
 
 function isNotARepoError(error: unknown): boolean {
-	const message =
-		error instanceof Error
-			? `${error.message}\n${"stderr" in error ? String((error as { stderr?: unknown }).stderr ?? "") : ""}`
-			: String(error);
+	const err = error as GitRunError | undefined;
+	// Missing git binary: nothing to show, same as outside a repository.
+	if (err?.code === "ENOENT") return true;
+	const message = `${err?.message ?? String(error)}\n${String(err?.stderr ?? "")}`;
 	return /not a git repository|outside repository|not a git repo/i.test(message);
 }
 
+let showStashSupport: Promise<boolean> | undefined;
+
+/** `--show-stash` emits `# stash N` in porcelain v2 from git 2.35 on. Checked once per process. */
+function supportsShowStash(cwd: string): Promise<boolean> {
+	showStashSupport ??= runGit(cwd, ["--version"]).then(
+		(out) => {
+			const match = out.match(/(\d+)\.(\d+)/);
+			const major = Number(match?.[1] ?? 0);
+			const minor = Number(match?.[2] ?? 0);
+			return major > 2 || (major === 2 && minor >= 35);
+		},
+		() => false,
+	);
+	return showStashSupport;
+}
+
 /**
- * Options for the optional probes that piggyback on the existing git refresh.
- * Both default to `false` so no extra git process is spawned unless a segment
- * is enabled and needs the data.
+ * Probes Zentui may run. All default to `false`, so callers spawn only what a
+ * visible segment needs.
  */
 export type ReadGitStatusOptions = {
-	/** Run `git describe --tags --exact-match HEAD` for the git_commit segment. */
+	/** `git status --porcelain=2 --branch` (counts, ahead/behind, oid). */
+	readStatus?: boolean;
+	/** REBASING/MERGING/… label via one `rev-parse --git-dir` + file checks. */
+	readState?: boolean;
+	/** `git describe --tags --exact-match HEAD` for the git_commit segment. */
 	readExactTag?: boolean;
-	/**
-	 * Run `git diff HEAD --numstat` for the git_metrics segment. Uses the
-	 * Starship-like “total dirty” view (staged + unstaged combined).
-	 */
+	/** `git diff HEAD --numstat` for the git_metrics segment (staged + unstaged). */
 	readMetrics?: boolean;
-	/** Add `--ignore-submodules=all` to the metrics diff when requested. */
+	/** Add `--ignore-submodules=all` to the metrics diff. */
 	ignoreSubmodules?: boolean;
 };
 
@@ -301,84 +299,64 @@ export async function readGitStatus(
 	cwd: string,
 	options: ReadGitStatusOptions = {},
 ): Promise<GitReadResult> {
-	const readExactTag = options.readExactTag === true;
-	const readMetrics = options.readMetrics === true;
-	try {
-		const numstatArgs = ["diff", "HEAD", "--numstat"];
-		if (options.ignoreSubmodules) numstatArgs.push("--ignore-submodules=all");
-		const [{ stdout: statusStdout }, stashResult, tagResult, metricsResult] = await Promise.all([
-			execFileAsync("git", ["status", "--porcelain=2", "--branch"], {
-				cwd,
-				timeout: GIT_COMMAND_TIMEOUT_MS,
-			}),
-			execFileAsync("git", ["stash", "list"], {
-				cwd,
-				timeout: GIT_COMMAND_TIMEOUT_MS,
-			}).catch(() => ({ stdout: "" })),
-			readExactTag
-				? execFileAsync("git", ["describe", "--tags", "--exact-match", "HEAD"], {
-						cwd,
-						timeout: GIT_COMMAND_TIMEOUT_MS,
-					}).then(
-						(r) => ({ stdout: typeof r.stdout === "string" ? r.stdout : String(r.stdout) }),
-						() => ({ stdout: "" }),
-					)
-				: Promise.resolve({ stdout: "" }),
-			readMetrics
-				? execFileAsync("git", numstatArgs, {
-						cwd,
-						timeout: GIT_COMMAND_TIMEOUT_MS,
-					}).then(
-						(r) => ({ stdout: typeof r.stdout === "string" ? r.stdout : String(r.stdout) }),
-						() => ({ stdout: "", failed: true as const }),
-					)
-				: Promise.resolve({ stdout: "", failed: true as const }),
-		]);
-		const stdoutText = typeof statusStdout === "string" ? statusStdout : String(statusStdout);
-		const stashStdout =
-			typeof stashResult.stdout === "string" ? stashResult.stdout : String(stashResult.stdout);
-		const stashCount = stashStdout.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
-		const status = parseGitStatusPorcelain(stdoutText, stashCount);
-		if (status.commit) {
-			const tagStdout =
-				typeof tagResult.stdout === "string" ? tagResult.stdout : String(tagResult.stdout);
-			const tag = tagStdout.trim();
-			status.commit = { ...status.commit, tag: tag || null };
-		}
-		if (readMetrics) {
-			if ("failed" in metricsResult && metricsResult.failed) {
-				status.metrics = null;
-			} else {
-				const metricsStdout =
-					typeof metricsResult.stdout === "string"
-						? metricsResult.stdout
-						: String(metricsResult.stdout);
-				status.metrics = parseGitNumstat(metricsStdout);
-			}
-		}
-		const operation = await readGitOperationState(cwd);
-		return {
-			kind: "ok",
-			status: {
-				...status,
-				...operation,
-			},
-		};
-	} catch (error) {
-		if (isNotARepoError(error)) return { kind: "not_a_repo" };
+	const { readStatus = false, readState = false, readExactTag = false, readMetrics = false } =
+		options;
+	const numstatArgs = ["diff", "HEAD", "--numstat"];
+	if (options.ignoreSubmodules) numstatArgs.push("--ignore-submodules=all");
 
-		// Distinguish not-a-repo vs transient with a cheap rev-parse on the error path.
-		try {
-			const { stdout } = await execFileAsync("git", ["rev-parse", "--is-inside-work-tree"], {
-				cwd,
-				timeout: GIT_COMMAND_TIMEOUT_MS,
-			});
-			const inside = (typeof stdout === "string" ? stdout : String(stdout)).trim();
-			if (inside !== "true") return { kind: "not_a_repo" };
-			return { kind: "error" };
-		} catch (inner) {
-			if (isNotARepoError(inner)) return { kind: "not_a_repo" };
-			return { kind: "error" };
-		}
+	// rev-parse doubles as the "is this a repo" check when nothing else runs.
+	const gitDirPromise = runGit(cwd, ["rev-parse", "--git-dir"]);
+	type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown };
+	// Settle eagerly so a failure that lands while we await rev-parse is never "unhandled".
+	const statusPromise: Promise<Settled<GitStatusSummary>> | undefined = readStatus
+		? supportsShowStash(cwd).then(async (showStash) => {
+				const args = ["status", "--porcelain=2", "--branch"];
+				if (showStash) args.push("--show-stash");
+				const [statusOut, stashOut] = await Promise.all([
+					runGit(cwd, args),
+					showStash ? Promise.resolve("") : runGit(cwd, ["stash", "list"]).catch(() => ""),
+				]);
+				const stashCount = stashOut.split(/\r?\n/).filter((line) => line.trim()).length;
+				return parseGitStatusPorcelain(statusOut, stashCount);
+			}).then(
+				(value): Settled<GitStatusSummary> => ({ ok: true, value }),
+				(error: unknown): Settled<GitStatusSummary> => ({ ok: false, error }),
+			)
+		: undefined;
+	const tagPromise = readExactTag
+		? runGit(cwd, ["describe", "--tags", "--exact-match", "HEAD"]).then(
+				(out) => out.trim() || null,
+				() => null,
+			)
+		: Promise.resolve(null);
+	const metricsPromise = readMetrics
+		? runGit(cwd, numstatArgs).then(parseGitNumstat, () => null)
+		: Promise.resolve(undefined);
+
+	let gitDir: string;
+	try {
+		const out = (await gitDirPromise).trim();
+		if (!out) throw new Error("empty git dir");
+		gitDir = isAbsolute(out) ? out : resolve(cwd, out);
+	} catch (error) {
+		// Let the other probes settle quietly before returning.
+		await Promise.allSettled([statusPromise, tagPromise, metricsPromise]);
+		return isNotARepoError(error) ? { kind: "not_a_repo" } : { kind: "error" };
 	}
+
+	let status = emptyGitStatus();
+	if (statusPromise) {
+		const settled = await statusPromise;
+		if (!settled.ok) {
+			await Promise.allSettled([tagPromise, metricsPromise]);
+			return isNotARepoError(settled.error) ? { kind: "not_a_repo" } : { kind: "error" };
+		}
+		status = settled.value;
+	}
+
+	const [tag, metrics] = await Promise.all([tagPromise, metricsPromise]);
+	if (status.commit) status.commit = { ...status.commit, tag };
+	if (readMetrics) status.metrics = metrics ?? null;
+	if (readState) status.gitStateLabel = readGitOperationState(gitDir);
+	return { kind: "ok", status };
 }

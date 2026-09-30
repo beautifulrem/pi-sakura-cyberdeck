@@ -15,7 +15,7 @@ import {
 	type ContextStyle,
 	type ExtensionStatusColorMode,
 	type ExtensionStatusPlacement,
-	type FixedEditorConfig,
+	type AnimationsConfig,
 	type FooterSegmentsConfig,
 	type GitBranchConfig,
 	type GitBranchMaxLength,
@@ -91,7 +91,7 @@ type SettingsCommandDeps = {
 	getActiveExtensionStatuses: () => ReadonlyMap<string, string>;
 	setExtensionStatusPlacement: (key: string, placement: ExtensionStatusPlacement) => void;
 	setExtensionStatusColorMode: (key: string, colorMode: ExtensionStatusColorMode) => void;
-	setFixedEditor: (patch: Partial<FixedEditorConfig>, ctx: ExtensionContext) => void;
+	setAnimations: (patch: Partial<AnimationsConfig>) => void;
 	requestRender: () => void;
 	settingsListTheme?: SettingsListTheme;
 };
@@ -111,16 +111,20 @@ const colorSettingDescriptions: Record<ColorSettingId, string> = {
 const featureSettingLabels: Record<FeatureSettingId, string> = {
 	editor: "Editor",
 	statusLine: "Status line",
+	messageStyle: "Message & tool styling",
 	copyFriendly: "Copy-friendly mode",
 };
 
 const featureSettingDescriptions: Record<FeatureSettingId, string> = {
-	editor:
-		"Enable or disable Zentui's custom editor, selector borders, and previous-message chrome.",
+	editor: "Enable or disable Zentui's framed editor (model/provider/thinking line).",
 	statusLine: "Enable or disable Zentui's custom footer/status line.",
+	messageStyle:
+		"Style previous user messages, tool blocks, thinking labels and selector borders. Independent of the editor.",
 	copyFriendly:
 		"Hide editor and previous-message rail glyphs for cleaner native terminal selection.",
 };
+
+const FOOTER_PULSE_SETTING_ID = "footerPulse";
 
 const footerSegmentSettingLabels: Record<FooterSegmentSettingId, string> = {
 	cwd: "Current directory",
@@ -162,6 +166,36 @@ const footerSegmentSettingDescriptions: Record<FooterSegmentSettingId, string> =
 		"Show aggregate added/deleted line counts (e.g. `+12 −3`) via `git diff HEAD --numstat`. Complements the git status counts. Starship `git_metrics`-style; default off.",
 };
 
+type DirectTarget = FeatureSettingId | typeof FOOTER_PULSE_SETTING_ID;
+
+/** Exact first-token → target. Anything else is rejected with the usage text. */
+const directTargets: Record<string, DirectTarget> = {
+	editor: "editor",
+	statusline: "statusLine",
+	"status-line": "statusLine",
+	status: "statusLine",
+	footer: "statusLine",
+	messages: "messageStyle",
+	"message-style": "messageStyle",
+	"copy-friendly": "copyFriendly",
+	copyfriendly: "copyFriendly",
+	copy: "copyFriendly",
+	pulse: FOOTER_PULSE_SETTING_ID,
+	"footer-pulse": FOOTER_PULSE_SETTING_ID,
+};
+
+type DirectAction = "enable" | "disable" | "toggle";
+
+const directActions: Record<string, DirectAction> = {
+	enable: "enable",
+	enabled: "enable",
+	on: "enable",
+	disable: "disable",
+	disabled: "disable",
+	off: "disable",
+	toggle: "toggle",
+};
+
 const directCommandSuggestions = [
 	"editor enable",
 	"editor disable",
@@ -169,12 +203,14 @@ const directCommandSuggestions = [
 	"statusline enable",
 	"statusline disable",
 	"statusline toggle",
+	"messages enable",
+	"messages disable",
+	"messages toggle",
 	"copy-friendly enable",
 	"copy-friendly disable",
 	"copy-friendly toggle",
-	"fixed-editor enable",
-	"fixed-editor disable",
-	"fixed-editor toggle",
+	"pulse enable",
+	"pulse disable",
 	"format clear",
 	"format $cwd on $git_branch $fill $context",
 	"format $cwd( on $git_branch)($git_status)$fill($context)( | $cost)",
@@ -201,7 +237,7 @@ function isColorSettingId(value: string): value is ColorSettingId {
 }
 
 function isFeatureSettingId(value: string): value is FeatureSettingId {
-	return value === "editor" || value === "statusLine" || value === "copyFriendly";
+	return Object.hasOwn(featureSettingLabels, value);
 }
 
 function isFooterSegmentSettingId(value: string): value is FooterSegmentSettingId {
@@ -299,8 +335,8 @@ function footerSegmentPatch(
 	return { [id]: value === "enabled" } as Partial<FooterSegmentsConfig>;
 }
 
-function usageText(): string {
-	return 'Usage: /zentui [editor|statusline|copy-friendly] [enable|disable|toggle] or /zentui format "<template>"';
+export function usageText(): string {
+	return 'Usage: /zentui [editor|statusline|messages|copy-friendly|pulse] [enable|disable|toggle] or /zentui format "<template>"';
 }
 
 function featureNotification(
@@ -312,66 +348,45 @@ function featureNotification(
 	return result.applied ? base : `${base} (${result.reason ?? "reload Pi to apply this change"})`;
 }
 
-function parseDirectFeatureCommand(
-	args: string,
-	config: PolishedTuiConfig,
-): { feature: FeatureSettingId; enabled: boolean } | undefined {
-	const normalized = args.trim().toLowerCase().replaceAll(/[_-]+/g, " ");
-	if (!normalized) return undefined;
+export type DirectCommand =
+	| { kind: "feature"; feature: FeatureSettingId; enabled: boolean }
+	| { kind: "footerPulse"; enabled: boolean }
+	| { kind: "removed"; message: string }
+	| { kind: "invalid" };
 
-	const words = normalized.split(/\s+/g).filter(Boolean);
-	const hasWord = (value: string) => words.includes(value);
-	const feature = hasWord("editor")
-		? "editor"
-		: hasWord("footer") || hasWord("statusline") || hasWord("status")
-			? "statusLine"
-			: hasWord("copyfriendly") || hasWord("copy")
-				? "copyFriendly"
-				: undefined;
-	const action = hasWord("toggle")
-		? "toggle"
-		: hasWord("enable") || hasWord("enabled") || hasWord("on")
-			? "enable"
-			: hasWord("disable") || hasWord("disabled") || hasWord("off")
-				? "disable"
-				: undefined;
+export const FIXED_EDITOR_REMOVED_MESSAGE =
+	'Zentui fixed-editor was removed. For a pinned editor use Pi\'s built-in fullscreen mode: set "tuiMode": "fullscreen" in Pi settings.';
 
-	if (!feature || !action) return undefined;
-
+/**
+ * Strict `/zentui <target> <action>` parser: exactly two tokens, each matched
+ * exactly (case-insensitive). No fuzzy word search, so e.g. `fixed-editor disable`
+ * can never toggle the main editor.
+ */
+export function parseDirectCommand(args: string, config: PolishedTuiConfig): DirectCommand {
+	const tokens = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
+	const [targetToken = "", actionToken = ""] = tokens;
+	if (["fixed-editor", "fixed_editor", "fixededitor"].includes(targetToken)) {
+		return { kind: "removed", message: FIXED_EDITOR_REMOVED_MESSAGE };
+	}
+	if (tokens.length !== 2) return { kind: "invalid" };
+	const target = Object.hasOwn(directTargets, targetToken) ? directTargets[targetToken] : undefined;
+	const action = Object.hasOwn(directActions, actionToken) ? directActions[actionToken] : undefined;
+	if (!target || !action) return { kind: "invalid" };
+	if (target === FOOTER_PULSE_SETTING_ID) {
+		const current = config.animations.footerPulse;
+		return { kind: "footerPulse", enabled: action === "toggle" ? !current : action === "enable" };
+	}
+	const current = config.features[target];
 	return {
-		feature,
-		enabled: action === "toggle" ? !config.features[feature] : action === "enable",
+		kind: "feature",
+		feature: target,
+		enabled: action === "toggle" ? !current : action === "enable",
 	};
 }
 
-function parseFixedEditorCommand(
-	args: string,
-	config: PolishedTuiConfig,
-): { enabled: boolean } | undefined {
-	const normalized = args.trim().toLowerCase().replaceAll(/[_-]+/g, " ");
-	if (!normalized) return undefined;
-
-	const words = normalized.split(/\s+/g).filter(Boolean);
-	const hasWord = (value: string) => words.includes(value);
-	if (!hasWord("fixededitor") && !(hasWord("fixed") && hasWord("editor"))) return undefined;
-
-	const action = hasWord("toggle")
-		? "toggle"
-		: hasWord("enable") || hasWord("enabled") || hasWord("on")
-			? "enable"
-			: hasWord("disable") || hasWord("disabled") || hasWord("off")
-				? "disable"
-				: undefined;
-	if (!action) return undefined;
-
-	return {
-		enabled: action === "toggle" ? !config.fixedEditor.enabled : action === "enable",
-	};
-}
-
-function parseFormatCommand(args: string): { value: string | undefined } | undefined {
+export function parseFormatCommand(args: string): { value: string | undefined } | undefined {
 	const trimmed = args.trim();
-	if (!trimmed.toLowerCase().startsWith("format")) return undefined;
+	if (!/^format(?:\s|$)/i.test(trimmed)) return undefined;
 
 	const rest = trimmed.slice("format".length).trim();
 	if (!rest || rest.toLowerCase() === "clear") return { value: undefined };
@@ -432,30 +447,13 @@ function buildItems(
 			}),
 		);
 		items.push({
-			id: "fixedEditor",
-			label: "Fixed editor (experimental)",
+			id: FOOTER_PULSE_SETTING_ID,
+			label: "Footer pulse animation",
 			description:
-				"Pin editor + footer at bottom while transcript scrolls. Uses alternate screen mode.",
-			currentValue: featureValue(config.fixedEditor.enabled),
+				"Shimmer footer gradients while the agent is working (re-renders the screen 4×/s). Off keeps the footer fully static.",
+			currentValue: featureValue(config.animations.footerPulse),
 			values: featureStateValues,
 		});
-		if (config.fixedEditor.enabled) {
-			items.push({
-				id: "fixedEditorMouseScroll",
-				label: "Mouse scroll",
-				description:
-					"Scroll transcript with mouse wheel. Breaks native terminal selection and tmux scrollback.",
-				currentValue: featureValue(config.fixedEditor.mouseScroll),
-				values: featureStateValues,
-			});
-			items.push({
-				id: "fixedEditorCopyNotice",
-				label: "Copy notice",
-				description: "Show a 'Copied to clipboard' message when drag-selecting text.",
-				currentValue: featureValue(config.fixedEditor.copyNotice),
-				values: featureStateValues,
-			});
-		}
 		return items;
 	}
 
@@ -618,21 +616,28 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
 				return;
 			}
 
-			const directCommand = parseDirectFeatureCommand(args, deps.getConfig());
-			if (directCommand) {
+			if (args.trim()) {
+				const command = parseDirectCommand(args, deps.getConfig());
+				if (command.kind === "invalid" || command.kind === "removed") {
+					if (ctx.hasUI) {
+						ctx.ui.notify(command.kind === "removed" ? command.message : usageText(), "warning");
+					}
+					return;
+				}
 				try {
-					const result = deps.setUiFeatures(
-						{ [directCommand.feature]: directCommand.enabled },
-						ctx,
-					);
+					if (command.kind === "footerPulse") {
+						deps.setAnimations({ footerPulse: command.enabled });
+						deps.requestRender();
+						if (ctx.hasUI) {
+							ctx.ui.notify(`Footer pulse animation: ${featureValue(command.enabled)}`, "info");
+						}
+						return;
+					}
+					const result = deps.setUiFeatures({ [command.feature]: command.enabled }, ctx);
 					deps.requestRender();
 					if (ctx.hasUI) {
 						ctx.ui.notify(
-							featureNotification(
-								directCommand.feature,
-								featureValue(directCommand.enabled),
-								result,
-							),
+							featureNotification(command.feature, featureValue(command.enabled), result),
 							"info",
 						);
 					}
@@ -640,26 +645,6 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
 					const message = error instanceof Error ? error.message : String(error);
 					if (ctx.hasUI) ctx.ui.notify(`Could not update Zentui settings: ${message}`, "error");
 				}
-				return;
-			}
-
-			const fixedEditorCommand = parseFixedEditorCommand(args, deps.getConfig());
-			if (fixedEditorCommand) {
-				try {
-					deps.setFixedEditor({ enabled: fixedEditorCommand.enabled }, ctx);
-					deps.requestRender();
-					if (ctx.hasUI) {
-						ctx.ui.notify(`Fixed editor: ${featureValue(fixedEditorCommand.enabled)}`, "info");
-					}
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					if (ctx.hasUI) ctx.ui.notify(`Could not update fixed editor: ${message}`, "error");
-				}
-				return;
-			}
-
-			if (args.trim()) {
-				if (ctx.hasUI) ctx.ui.notify(usageText(), "warning");
 				return;
 			}
 
@@ -786,27 +771,11 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
 									return;
 								}
 
-								if (id === "fixedEditor" && isFeatureState(newValue)) {
-									deps.setFixedEditor({ enabled: newValue === "enabled" }, ctx);
-									settingsList = makeSettingsList();
-									deps.requestRender();
-									ctx.ui.notify(`Fixed editor: ${newValue}`, "info");
-									tui.requestRender();
-									return;
-								}
-								if (id === "fixedEditorMouseScroll" && isFeatureState(newValue)) {
-									deps.setFixedEditor({ mouseScroll: newValue === "enabled" }, ctx);
+								if (id === FOOTER_PULSE_SETTING_ID && isFeatureState(newValue)) {
+									deps.setAnimations({ footerPulse: newValue === "enabled" });
 									settingsList.updateValue(id, newValue);
 									deps.requestRender();
-									ctx.ui.notify(`Mouse scroll: ${newValue}`, "info");
-									tui.requestRender();
-									return;
-								}
-								if (id === "fixedEditorCopyNotice" && isFeatureState(newValue)) {
-									deps.setFixedEditor({ copyNotice: newValue === "enabled" }, ctx);
-									settingsList.updateValue(id, newValue);
-									deps.requestRender();
-									ctx.ui.notify(`Copy notice: ${newValue}`, "info");
+									ctx.ui.notify(`Footer pulse animation: ${newValue}`, "info");
 									tui.requestRender();
 									return;
 								}

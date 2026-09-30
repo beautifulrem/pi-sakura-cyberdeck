@@ -1,8 +1,10 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const devRoot = new URL("../.dev/node_modules/", import.meta.url);
-const piRoot = new URL("@earendil-works/pi-coding-agent/", devRoot);
+// PI_HOST_ROOT=/path/to/node_modules/@earendil-works/pi-coding-agent runs the suite against another Pi.
+const piRoot = process.env.PI_HOST_ROOT
+	? pathToFileURL(`${process.env.PI_HOST_ROOT.replace(/\/$/, "")}/`)
+	: new URL("../.dev/node_modules/@earendil-works/pi-coding-agent/", import.meta.url);
 const hosts = {
 	"@earendil-works/pi-coding-agent": piRoot,
 	"@earendil-works/pi-tui": new URL("node_modules/@earendil-works/pi-tui/", piRoot),
