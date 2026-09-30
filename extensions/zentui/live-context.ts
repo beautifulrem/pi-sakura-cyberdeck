@@ -1,5 +1,19 @@
-import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import type { SessionLifecycle } from "./session-lifecycle";
+
+/** Minimal structural view of a streamed message's usage (Pi 0.87 → 0.99). */
+type UsageLike = {
+	input?: unknown;
+	output?: unknown;
+	cacheRead?: unknown;
+	cacheWrite?: unknown;
+	totalTokens?: unknown;
+};
+
+type AssistantMessageLike = {
+	role?: unknown;
+	stopReason?: unknown;
+	usage?: UsageLike;
+};
 
 export type LiveContextOverride = {
 	tokens: number;
@@ -9,7 +23,7 @@ function usageComponent(value: unknown): number {
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-export function calculateLiveContextTokens(usage: Usage | undefined): number | undefined {
+function calculateLiveContextTokens(usage: UsageLike | undefined): number | undefined {
 	if (!usage) return undefined;
 	const totalTokens = usageComponent(usage.totalTokens);
 	if (totalTokens > 0) return totalTokens;
@@ -21,9 +35,9 @@ export function calculateLiveContextTokens(usage: Usage | undefined): number | u
 	return calculated > 0 ? calculated : undefined;
 }
 
-export function liveContextFromMessage(message: unknown): LiveContextOverride | undefined {
+function liveContextFromMessage(message: unknown): LiveContextOverride | undefined {
 	if (!message || typeof message !== "object") return undefined;
-	const assistant = message as Partial<AssistantMessage>;
+	const assistant = message as AssistantMessageLike;
 	if (assistant.role !== "assistant") return undefined;
 	if (assistant.stopReason === "error" || assistant.stopReason === "aborted") return undefined;
 	const tokens = calculateLiveContextTokens(assistant.usage);

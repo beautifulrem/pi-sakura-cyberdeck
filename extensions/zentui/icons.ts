@@ -1,8 +1,7 @@
 /**
  * Icon mode defaults and resolvers.
  *
- * Nerd defaults must stay byte-identical to historical `defaultConfig.icons`,
- * except where intentionally changed to match the Starship Nerd Font preset.
+ * These are the single source of icon defaults (config.ts builds on them).
  * User string overrides always win over mode defaults.
  */
 
@@ -79,6 +78,7 @@ export const NERD_DEFAULT_ICONS: IconGlyphs = {
 	deleted: "✘",
 	typechanged: "T",
 	cacheHit: "󰆼",
+	// Same glyphs users saw in ≤1.1.6 (rail │, no prompt glyph); override via icons.* in config.
 	editorPrompt: "",
 	rail: "│",
 	username: "",
@@ -88,7 +88,7 @@ export const NERD_DEFAULT_ICONS: IconGlyphs = {
 	package: "",
 };
 
-export const ASCII_DEFAULT_ICONS: IconGlyphs = {
+const ASCII_DEFAULT_ICONS: IconGlyphs = {
 	cwd: "",
 	git: "*",
 	ahead: "^",
@@ -111,77 +111,28 @@ export const ASCII_DEFAULT_ICONS: IconGlyphs = {
 	package: "pkg",
 };
 
-export const OS_PLATFORM_ICONS_NERD: Record<string, string> = {
+const OS_PLATFORM_ICONS_NERD: Record<string, string> = {
 	darwin: "\uf179",
 	linux: "\uf17c",
 	win32: "\uf17a",
 };
 
-export const OS_PLATFORM_ICONS_ASCII: Record<string, string> = {
+const OS_PLATFORM_ICONS_ASCII: Record<string, string> = {
 	darwin: "mac",
 	linux: "linux",
 	win32: "win",
 };
 
-/** Short ASCII labels keyed by runtime `name`. */
-export const RUNTIME_ASCII_SYMBOLS: Record<string, string> = {
-	xmake: "xm",
-	maven: "mvn",
-	gradle: "grd",
+/** Short ASCII labels keyed by runtime `name` (see runtime.ts). */
+const RUNTIME_ASCII_SYMBOLS: Record<string, string> = {
 	bun: "bun",
 	deno: "deno",
-	lua: "lua",
 	nodejs: "node",
 	python: "py",
 	golang: "go",
 	rust: "rs",
-	java: "java",
 	ruby: "rb",
-	php: "php",
-	buf: "buf",
-	cmake: "cmake",
-	cpp: "c++",
-	c: "c",
-	cobol: "cob",
-	conda: "conda",
-	crystal: "cr",
-	dart: "dart",
-	dotnet: ".net",
-	elixir: "ex",
-	elm: "elm",
-	erlang: "erl",
-	fennel: "fnl",
-	fortran: "f90",
-	gleam: "glm",
-	guix_shell: "guix",
-	haskell: "hs",
-	haxe: "hx",
-	helm: "helm",
-	julia: "jl",
-	kotlin: "kt",
-	meson: "meson",
-	mojo: "mojo",
-	nim: "nim",
-	nix_shell: "nix",
-	ocaml: "ml",
-	odin: "odin",
-	opa: "opa",
-	perl: "pl",
-	pixi: "pixi",
-	pulumi: "pul",
-	purescript: "purs",
-	raku: "raku",
-	red: "red",
-	rlang: "R",
-	scala: "scala",
-	solidity: "sol",
-	spack: "spack",
-	swift: "swift",
-	terraform: "tf",
-	typst: "typ",
-	vagrant: "vag",
-	vlang: "v",
-	zig: "zig",
+	java: "java",
 };
 
 export function isIconMode(value: unknown): value is IconMode {
@@ -192,7 +143,7 @@ export function normalizeIconMode(value: unknown): IconMode {
 	return isIconMode(value) ? value : "auto";
 }
 
-export function modeDefaultIcons(mode: IconMode): IconGlyphs {
+function modeDefaultIcons(mode: IconMode): IconGlyphs {
 	return mode === "ascii" ? { ...ASCII_DEFAULT_ICONS } : { ...NERD_DEFAULT_ICONS };
 }
 
@@ -234,7 +185,9 @@ export function resolveRuntimeSymbol(
 	mode: IconMode = "auto",
 ): string {
 	if (mode !== "ascii") return nerdSymbol;
-	return RUNTIME_ASCII_SYMBOLS[name] ?? (name.slice(0, 3) || "*");
+	return Object.hasOwn(RUNTIME_ASCII_SYMBOLS, name)
+		? (RUNTIME_ASCII_SYMBOLS[name] ?? "*")
+		: name.slice(0, 3) || "*";
 }
 
 /**

@@ -1,11 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import {
-	buildContextLabel,
-	buildCostLabel,
-	buildTokenLabel,
-	formatProviderLabel,
-	getUsageTotals,
-} from "./format";
+import { sanitizeDisplayText } from "./extension-status";
+import { formatProviderLabel } from "./format";
 import type { GitStatusSummary } from "./git";
 import type { PackageVersionResult } from "./package-version";
 import type { RuntimeInfo } from "./runtime";
@@ -13,9 +8,6 @@ import type { RuntimeInfo } from "./runtime";
 export type FooterState = GitStatusSummary & {
 	modelLabel: string;
 	providerLabel: string;
-	contextLabel: string;
-	tokenLabel: string;
-	costLabel: string;
 	runtime?: RuntimeInfo;
 	packageVersion?: PackageVersionResult;
 	sessionStartEpoch?: number;
@@ -25,9 +17,6 @@ export function createInitialState(gitDefaults: GitStatusSummary): FooterState {
 	return {
 		modelLabel: "no-model",
 		providerLabel: "Unknown",
-		contextLabel: "--",
-		tokenLabel: "↑0 ↓0",
-		costLabel: "$0.000",
 		runtime: undefined,
 		packageVersion: undefined,
 		sessionStartEpoch: Date.now(),
@@ -35,11 +24,8 @@ export function createInitialState(gitDefaults: GitStatusSummary): FooterState {
 	};
 }
 
-export function syncState(state: FooterState, ctx: ExtensionContext, cacheHitIcon: string): void {
-	const totals = getUsageTotals(ctx);
-	state.modelLabel = ctx.model?.id ?? "no-model";
-	state.providerLabel = formatProviderLabel(ctx.model?.provider);
-	state.contextLabel = buildContextLabel(ctx);
-	state.tokenLabel = buildTokenLabel(totals, cacheHitIcon);
-	state.costLabel = buildCostLabel(totals);
+/** Model/provider labels for the editor meta line. Usage and context are read lazily at render. */
+export function syncState(state: FooterState, ctx: Pick<ExtensionContext, "model">): void {
+	state.modelLabel = sanitizeDisplayText(ctx.model?.id ?? "") || "no-model";
+	state.providerLabel = sanitizeDisplayText(formatProviderLabel(ctx.model?.provider));
 }

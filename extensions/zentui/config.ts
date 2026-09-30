@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
 	closeSync,
-	existsSync,
 	fchmodSync,
 	fsyncSync,
 	lstatSync,
@@ -19,7 +18,6 @@ import {
 	ICON_GLYPH_KEYS,
 	type IconGlyphs,
 	type IconMode,
-	NERD_DEFAULT_ICONS,
 	normalizeIconMode,
 	type ResolvedIcons,
 	resolveConfiguredIcons,
@@ -62,6 +60,13 @@ export type UiFeaturesConfig = {
 	editor: boolean;
 	statusLine: boolean;
 	copyFriendly: boolean;
+	/** Zentui styling of transcript messages, tool blocks and selector borders. */
+	messageStyle: boolean;
+};
+
+export type AnimationsConfig = {
+	/** Shimmer the footer gradients while the agent is working (re-renders 4×/s). */
+	footerPulse: boolean;
 };
 
 export type FooterSegmentsConfig = {
@@ -80,12 +85,6 @@ export type FooterSegmentsConfig = {
 	time: boolean;
 	os: boolean;
 	packageVersion: boolean;
-};
-
-export type FixedEditorConfig = {
-	enabled: boolean;
-	mouseScroll: boolean;
-	copyNotice: boolean;
 };
 
 export type ExtensionStatusPlacement = "off" | "left" | "middle" | "right";
@@ -118,7 +117,8 @@ export type ExtensionStatusesConfig = {
 	colorModes: Record<string, ExtensionStatusColorMode>;
 };
 
-const DEFAULT_PROJECT_REFRESH_INTERVAL_MS = 30_000;
+/** Background git/runtime rescan; branch switches and agent turns refresh sooner. */
+const DEFAULT_PROJECT_REFRESH_INTERVAL_MS = 60_000;
 const MIN_PROJECT_REFRESH_INTERVAL_MS = 5_000;
 
 export type PolishedTuiConfig = {
@@ -161,42 +161,16 @@ export type PolishedTuiConfig = {
 		editorThinkingMedium?: ColorSpec;
 		editorThinkingHigh?: ColorSpec;
 		editorThinkingXhigh?: ColorSpec;
+		editorThinkingMax?: ColorSpec;
 	};
 	colorSources: ColorSourcesConfig;
 	features: UiFeaturesConfig;
+	animations: AnimationsConfig;
 	footerSegments: FooterSegmentsConfig;
 	gitCommit: GitCommitConfig;
 	gitMetrics: GitMetricsConfig;
 	extensionStatuses: ExtensionStatusesConfig;
-	fixedEditor: FixedEditorConfig;
 };
-
-/**
- * Canonical footer format variable names. In a `footerFormat` string these
- * are written as `$name` or `${name}`.
- */
-export const FOOTER_FORMAT_VARIABLES = [
-	"cwd",
-	"git_branch",
-	"git_status",
-	"git_state",
-	"runtime",
-	"session_duration",
-	"username",
-	"os",
-	"time",
-	"context",
-	"tokens",
-	"cost",
-	"package",
-	"package_version",
-	"git_commit",
-	"git_tag",
-	"git_metrics",
-	"git_added",
-	"git_deleted",
-	"sep",
-] as const;
 
 /**
  * Alias → canonical variable name mapping for `footerFormat`.
@@ -213,113 +187,108 @@ export const FOOTER_FORMAT_ALIASES: Record<string, string> = {
 	separator: "sep",
 };
 
-export const configPath = join(getAgentDir(), "sakura-cyberdeck-zentui.json");
+const configPath = join(getAgentDir(), "sakura-cyberdeck-zentui.json");
 
-export const defaultConfig: PolishedTuiConfig = {
-	projectRefreshIntervalMs: 60_000,
-	footerFormat:
-		"$os  $cwd(  $git_branch)( $git_status)(  $runtime)$fill($context)(  $tokens)(  $cost)",
-	separator: "chevron",
-	contextStyle: "text+gauge",
-	contextThresholds: { warning: 70, error: 90 },
-	pathDisplay: { mode: "basename", depth: 0 },
-	gitBranch: { maxLength: 30 },
-	icons: {
-		mode: "nerd",
-		...NERD_DEFAULT_ICONS,
-		rail: "▐",
-		editorPrompt: "󰜴",
-	},
-	colors: {
-		cwd: "bold #F2A7C6",
-		gitBranch: "bold #C7B8F5",
-		gitStatus: "bold #F6BC9A",
-		contextNormal: "#9FD3F2",
-		contextWarning: "bold #F3D98B",
-		contextError: "bold #FF8FA3",
-		tokens: "#A99BAE",
-		cost: "#F6BC9A",
-		separator: "#716879",
-		runtimePrefix: "#9FD3F2",
-		extensionStatus: "#EFC3E6",
-		sessionDuration: "#F3D98B",
-		packageVersion: "#F6BC9A",
-		gitCommit: "#AEE5C5",
-		gitMetricsAdded: "#AEE5C5",
-		gitMetricsDeleted: "#FF8FA3",
-		username: "#F3D98B",
-		time: "#F3D98B",
-		os: "#F7EEF8",
-		editorAccent: "bold #F2A7C6",
-		editorPrompt: "bold #F2A7C6",
-		editorBorder: "sakura-macaron-gradient",
-		editorModel: "bold #F2A7C6",
-		editorProvider: "#B8BEDD",
-		editorThinking: "#C7B8F5",
-		editorThinkingMinimal: "#716879",
-		editorThinkingLow: "#9FD3F2",
-		editorThinkingMedium: "#EFC3E6",
-		editorThinkingHigh: "bold #F2A7C6",
-		editorThinkingXhigh: "bold #C7B8F5",
-	},
-	colorSources: {
-		starship: "terminal",
-		editor: "terminal",
-		userMessages: "theme",
-	},
-	features: {
-		editor: true,
-		statusLine: true,
-		copyFriendly: false,
-	},
-	footerSegments: {
-		cwd: true,
-		gitBranch: true,
-		gitStatus: true,
-		gitCounts: false,
-		runtime: true,
-		context: true,
-		tokens: true,
-		cost: true,
-		sessionDuration: false,
-		username: false,
-		time: false,
-		os: true,
-		packageVersion: false,
-		gitCommit: false,
-		gitMetrics: false,
-	},
-	gitCommit: {
-		hashLength: 7,
-		onlyDetached: true,
-		showTag: true,
-	},
-	gitMetrics: {
-		onlyNonzero: true,
-		ignoreSubmodules: false,
-	},
-	extensionStatuses: {
-		defaultPlacement: "right",
-		placements: {
-			"codex-goal": "middle",
-			"xai-usage": "right",
-		},
-		colorModes: {},
-	},
-	// Default off: the fixed-editor compositor patches private Pi TUI APIs and is
-	// incompatible with Pi 0.84+ native sticky/fullscreen layout. Prefer Pi's
-	// `tuiMode: "fullscreen"` for sticky editor. Runtime still hard-blocks on 0.84+.
-	fixedEditor: {
-		enabled: false,
-		mouseScroll: true,
-		copyNotice: true,
-	},
+// ---------------------------------------------------------------------------
+// Defaults — the single source of truth. `defaultConfig` below is literally
+// `mergeConfig({})`, so the parsed empty config and the exported defaults can
+// never drift apart again.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_COLORS: PolishedTuiConfig["colors"] = {
+	cwd: "bold #F2A7C6",
+	gitBranch: "bold #C7B8F5",
+	gitStatus: "bold #F6BC9A",
+	contextNormal: "#9FD3F2",
+	contextWarning: "bold #F3D98B",
+	contextError: "bold #FF8FA3",
+	tokens: "#A99BAE",
+	cost: "#F6BC9A",
+	separator: "#877C8F",
+	runtimePrefix: "#9FD3F2",
+	extensionStatus: "#EFC3E6",
+	sessionDuration: "#F3D98B",
+	packageVersion: "#F6BC9A",
+	gitCommit: "#AEE5C5",
+	gitMetricsAdded: "#AEE5C5",
+	gitMetricsDeleted: "#FF8FA3",
+	username: "#F3D98B",
+	time: "#F3D98B",
+	os: "#F7EEF8",
+	editorAccent: "bold #F2A7C6",
+	editorPrompt: "bold #F2A7C6",
+	editorBorder: "sakura-macaron-gradient",
+	editorModel: "bold #F2A7C6",
+	editorProvider: "#B8BEDD",
+	editorThinking: "#C7B8F5",
+	editorThinkingMinimal: "#877C8F",
+	editorThinkingLow: "#9FD3F2",
+	editorThinkingMedium: "#EFC3E6",
+	editorThinkingHigh: "bold #F2A7C6",
+	editorThinkingXhigh: "bold #C7B8F5",
+	editorThinkingMax: "bold #FF8FA3",
+};
+
+const DEFAULT_COLOR_SOURCES: ColorSourcesConfig = {
+	starship: "terminal",
+	editor: "terminal",
+	userMessages: "theme",
+};
+
+const DEFAULT_FEATURES: UiFeaturesConfig = {
+	editor: true,
+	statusLine: true,
+	copyFriendly: false,
+	messageStyle: true,
+};
+
+const DEFAULT_ANIMATIONS: AnimationsConfig = {
+	footerPulse: false,
+};
+
+const DEFAULT_FOOTER_SEGMENTS: FooterSegmentsConfig = {
+	cwd: true,
+	gitBranch: true,
+	gitStatus: true,
+	gitCounts: false,
+	runtime: true,
+	context: true,
+	tokens: true,
+	cost: true,
+	sessionDuration: false,
+	username: false,
+	time: false,
+	os: true,
+	packageVersion: false,
+	gitCommit: false,
+	gitMetrics: false,
+};
+
+const DEFAULT_GIT_COMMIT: GitCommitConfig = { hashLength: 7, onlyDetached: true, showTag: true };
+const DEFAULT_GIT_METRICS: GitMetricsConfig = { onlyNonzero: true, ignoreSubmodules: false };
+const DEFAULT_CONTEXT_THRESHOLDS: ContextThresholds = { warning: 70, error: 90 };
+const DEFAULT_PATH_DISPLAY: PathDisplayConfig = { mode: "basename", depth: 0 };
+const DEFAULT_GIT_BRANCH_MAX_LENGTH: GitBranchMaxLength = 30;
+const DEFAULT_SEPARATOR: SeparatorStyle = "chevron";
+const DEFAULT_CONTEXT_STYLE: ContextStyle = "text+gauge";
+/** Empty = segment-toggle layout (a format string would override the segment toggles). */
+const DEFAULT_FOOTER_FORMAT = "";
+const DEFAULT_EXTENSION_PLACEMENTS: Record<string, ExtensionStatusPlacement> = {
+	"codex-goal": "middle",
+	"xai-usage": "right",
 };
 
 type ConfigRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is ConfigRecord {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Prototype-free record so user-controlled keys like `__proto__` stay plain data. */
+function nullProtoRecord<T>(entries: Iterable<readonly [string, T]>): Record<string, T> {
+	const record = Object.create(null) as Record<string, T>;
+	for (const [key, value] of entries) record[key] = value;
+	return record;
 }
 
 function parseProjectRefreshIntervalMs(value: unknown): number {
@@ -339,7 +308,7 @@ function clampPercent(value: number): number {
 
 function parseContextStyle(value: unknown): ContextStyle {
 	if (value === "text" || value === "gauge" || value === "text+gauge") return value;
-	return defaultConfig.contextStyle;
+	return DEFAULT_CONTEXT_STYLE;
 }
 
 export function isSeparatorStyle(value: unknown): value is SeparatorStyle {
@@ -347,11 +316,11 @@ export function isSeparatorStyle(value: unknown): value is SeparatorStyle {
 }
 
 function parseSeparatorStyle(value: unknown): SeparatorStyle {
-	return isSeparatorStyle(value) ? value : defaultConfig.separator;
+	return isSeparatorStyle(value) ? value : DEFAULT_SEPARATOR;
 }
 
 function parseContextThresholds(value: unknown): ContextThresholds {
-	const defaults = defaultConfig.contextThresholds;
+	const defaults = DEFAULT_CONTEXT_THRESHOLDS;
 	if (!isRecord(value)) return { ...defaults };
 
 	const warningRaw = value.warning;
@@ -373,7 +342,7 @@ function parseContextThresholds(value: unknown): ContextThresholds {
 }
 
 function parsePathDisplay(value: unknown): PathDisplayConfig {
-	const defaults = defaultConfig.pathDisplay;
+	const defaults = DEFAULT_PATH_DISPLAY;
 	if (!isRecord(value)) return { ...defaults };
 	const mode = value.mode === "full" || value.mode === "basename" ? value.mode : defaults.mode;
 	const rawDepth = value.depth;
@@ -387,12 +356,11 @@ function parsePathDisplay(value: unknown): PathDisplayConfig {
 function normalizeGitBranchMaxLength(value: unknown): GitBranchMaxLength {
 	if (value === "full") return value;
 	if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
-	return defaultConfig.gitBranch.maxLength;
+	return DEFAULT_GIT_BRANCH_MAX_LENGTH;
 }
 
 function parseGitBranchConfig(value: unknown): GitBranchConfig {
-	const defaults = defaultConfig.gitBranch;
-	if (!isRecord(value)) return { ...defaults };
+	if (!isRecord(value)) return { maxLength: DEFAULT_GIT_BRANCH_MAX_LENGTH };
 	return {
 		maxLength: normalizeGitBranchMaxLength(value.maxLength),
 	};
@@ -414,12 +382,12 @@ function colorSourceValue(
 	key: keyof ColorSourcesConfig,
 ): ColorSource {
 	const value = record[key];
-	return value === "terminal" || value === "theme" ? value : defaultConfig.colorSources[key];
+	return value === "terminal" || value === "theme" ? value : DEFAULT_COLOR_SOURCES[key];
 }
 
 function booleanValue(record: Record<string, unknown>, key: keyof UiFeaturesConfig): boolean {
 	const value = record[key];
-	return typeof value === "boolean" ? value : defaultConfig.features[key];
+	return typeof value === "boolean" ? value : DEFAULT_FEATURES[key];
 }
 
 function footerSegmentValue(
@@ -427,7 +395,7 @@ function footerSegmentValue(
 	key: keyof FooterSegmentsConfig,
 ): boolean {
 	const value = record[key];
-	return typeof value === "boolean" ? value : defaultConfig.footerSegments[key];
+	return typeof value === "boolean" ? value : DEFAULT_FOOTER_SEGMENTS[key];
 }
 
 function definedColors(
@@ -481,6 +449,7 @@ function normalizeColors(record: Record<string, unknown>): Partial<PolishedTuiCo
 		editorThinkingMedium: colorValue(record, "editorThinkingMedium"),
 		editorThinkingHigh: colorValue(record, "editorThinkingHigh"),
 		editorThinkingXhigh: colorValue(record, "editorThinkingXhigh"),
+		editorThinkingMax: colorValue(record, "editorThinkingMax"),
 	});
 }
 
@@ -497,6 +466,17 @@ function normalizeUiFeatures(record: Record<string, unknown>): UiFeaturesConfig 
 		editor: booleanValue(record, "editor"),
 		statusLine: booleanValue(record, "statusLine"),
 		copyFriendly: booleanValue(record, "copyFriendly"),
+		// Absent in ≤1.1.6 configs, where message styling was tied to the editor switch.
+		messageStyle:
+			typeof record.messageStyle === "boolean" ? record.messageStyle : booleanValue(record, "editor"),
+	};
+}
+
+function normalizeAnimations(value: unknown): AnimationsConfig {
+	const record = isRecord(value) ? value : {};
+	return {
+		footerPulse:
+			typeof record.footerPulse === "boolean" ? record.footerPulse : DEFAULT_ANIMATIONS.footerPulse,
 	};
 }
 
@@ -523,7 +503,7 @@ function normalizeFooterSegments(record: Record<string, unknown>): FooterSegment
 /** Clamp hashLength to Git's valid abbreviation range [4, 40]. */
 function normalizeGitHashLength(value: unknown): number {
 	const parsed = typeof value === "number" ? value : Number(value);
-	if (!Number.isFinite(parsed)) return defaultConfig.gitCommit.hashLength;
+	if (!Number.isFinite(parsed)) return DEFAULT_GIT_COMMIT.hashLength;
 	const rounded = Math.round(parsed);
 	return Math.min(40, Math.max(4, rounded));
 }
@@ -534,8 +514,8 @@ function normalizeGitCommitConfig(record: Record<string, unknown>): GitCommitCon
 		onlyDetached:
 			typeof record.onlyDetached === "boolean"
 				? record.onlyDetached
-				: defaultConfig.gitCommit.onlyDetached,
-		showTag: typeof record.showTag === "boolean" ? record.showTag : defaultConfig.gitCommit.showTag,
+				: DEFAULT_GIT_COMMIT.onlyDetached,
+		showTag: typeof record.showTag === "boolean" ? record.showTag : DEFAULT_GIT_COMMIT.showTag,
 	};
 }
 
@@ -544,11 +524,11 @@ function normalizeGitMetricsConfig(record: Record<string, unknown>): GitMetricsC
 		onlyNonzero:
 			typeof record.onlyNonzero === "boolean"
 				? record.onlyNonzero
-				: defaultConfig.gitMetrics.onlyNonzero,
+				: DEFAULT_GIT_METRICS.onlyNonzero,
 		ignoreSubmodules:
 			typeof record.ignoreSubmodules === "boolean"
 				? record.ignoreSubmodules
-				: defaultConfig.gitMetrics.ignoreSubmodules,
+				: DEFAULT_GIT_METRICS.ignoreSubmodules,
 	};
 }
 
@@ -563,23 +543,23 @@ export function isExtensionStatusColorMode(value: unknown): value is ExtensionSt
 function normalizeExtensionStatuses(record: Record<string, unknown>): ExtensionStatusesConfig {
 	const defaultPlacement = isExtensionStatusPlacement(record.defaultPlacement)
 		? record.defaultPlacement
-		: defaultConfig.extensionStatuses.defaultPlacement;
-	const placements = isRecord(record.placements)
-		? Object.fromEntries(
-				Object.entries(record.placements).filter(
+		: "right";
+	const placements = nullProtoRecord(
+		isRecord(record.placements)
+			? Object.entries(record.placements).filter(
 					(entry): entry is [string, ExtensionStatusPlacement] =>
 						isExtensionStatusPlacement(entry[1]),
-				),
-			)
-		: {};
-	const colorModes = isRecord(record.colorModes)
-		? Object.fromEntries(
-				Object.entries(record.colorModes).filter(
+				)
+			: [],
+	);
+	const colorModes = nullProtoRecord(
+		isRecord(record.colorModes)
+			? Object.entries(record.colorModes).filter(
 					(entry): entry is [string, ExtensionStatusColorMode] =>
 						isExtensionStatusColorMode(entry[1]),
-				),
-			)
-		: {};
+				)
+			: [],
+	);
 
 	return {
 		defaultPlacement,
@@ -588,47 +568,16 @@ function normalizeExtensionStatuses(record: Record<string, unknown>): ExtensionS
 	};
 }
 
-function normalizeFixedEditorConfig(record: Record<string, unknown>): FixedEditorConfig {
-	return {
-		enabled:
-			typeof record.enabled === "boolean" ? record.enabled : defaultConfig.fixedEditor.enabled,
-		mouseScroll:
-			typeof record.mouseScroll === "boolean"
-				? record.mouseScroll
-				: defaultConfig.fixedEditor.mouseScroll,
-		copyNotice:
-			typeof record.copyNotice === "boolean"
-				? record.copyNotice
-				: defaultConfig.fixedEditor.copyNotice,
-	};
-}
-
 function isColorSourceKey(value: string): value is keyof ColorSourcesConfig {
 	return value === "starship" || value === "editor" || value === "userMessages";
 }
 
 function isUiFeatureKey(value: string): value is keyof UiFeaturesConfig {
-	return value === "editor" || value === "statusLine" || value === "copyFriendly";
+	return Object.hasOwn(DEFAULT_FEATURES, value);
 }
 
 function isFooterSegmentKey(value: string): value is keyof FooterSegmentsConfig {
-	return (
-		value === "cwd" ||
-		value === "gitBranch" ||
-		value === "gitStatus" ||
-		value === "gitCounts" ||
-		value === "runtime" ||
-		value === "context" ||
-		value === "tokens" ||
-		value === "cost" ||
-		value === "sessionDuration" ||
-		value === "username" ||
-		value === "time" ||
-		value === "os" ||
-		value === "packageVersion" ||
-		value === "gitCommit" ||
-		value === "gitMetrics"
-	);
+	return Object.hasOwn(DEFAULT_FOOTER_SEGMENTS, value);
 }
 
 function validColorSourceEntries(record: Record<string, unknown>): Partial<ColorSourcesConfig> {
@@ -737,91 +686,114 @@ function mutateConfig(path: string, mutate: (record: ConfigRecord) => void): Pol
 	return mergeConfig(state.record);
 }
 
-export function ensureConfigExists(): void {
-	// Intentionally left as a no-op. Zentui config is user-owned and
-	// compatibility-sensitive: runtime defaults come from `mergeConfig({})`, and
-	// the extension should not persist opinionated defaults unless the user
-	// explicitly changes a setting.
-}
-
 export function mergeConfig(parsed: unknown): PolishedTuiConfig {
 	const config = isRecord(parsed) ? parsed : {};
-	const iconsRecord = isRecord(config.icons) ? (config.icons as Record<string, unknown>) : {};
-	const iconMode = normalizeIconMode(iconsRecord.mode);
-	const iconOverrides = normalizeIconOverrides(iconsRecord);
-	const colors = isRecord(config.colors)
-		? normalizeColors(config.colors as Record<string, unknown>)
-		: {};
-	const colorSources = isRecord(config.colorSources)
-		? normalizeColorSources(config.colorSources as Record<string, unknown>)
-		: defaultConfig.colorSources;
-	const features = isRecord(config.features)
-		? normalizeUiFeatures(config.features as Record<string, unknown>)
-		: defaultConfig.features;
-	const footerSegments = isRecord(config.footerSegments)
-		? normalizeFooterSegments(config.footerSegments as Record<string, unknown>)
-		: defaultConfig.footerSegments;
+	const iconsRecord = isRecord(config.icons) ? config.icons : {};
+	const colors = isRecord(config.colors) ? normalizeColors(config.colors) : {};
 	const extensionStatuses = isRecord(config.extensionStatuses)
-		? normalizeExtensionStatuses(config.extensionStatuses as Record<string, unknown>)
-		: defaultConfig.extensionStatuses;
-	const gitCommit = isRecord(config.gitCommit)
-		? normalizeGitCommitConfig(config.gitCommit as Record<string, unknown>)
-		: defaultConfig.gitCommit;
-	const gitMetrics = isRecord(config.gitMetrics)
-		? normalizeGitMetricsConfig(config.gitMetrics as Record<string, unknown>)
-		: defaultConfig.gitMetrics;
-	const gitBranch = parseGitBranchConfig(config.gitBranch);
-	const fixedEditor = isRecord(config.fixedEditor)
-		? normalizeFixedEditorConfig(config.fixedEditor as Record<string, unknown>)
-		: defaultConfig.fixedEditor;
+		? normalizeExtensionStatuses(config.extensionStatuses)
+		: {
+				defaultPlacement: "right" as const,
+				placements: nullProtoRecord(Object.entries(DEFAULT_EXTENSION_PLACEMENTS)),
+				colorModes: nullProtoRecord<ExtensionStatusColorMode>([]),
+			};
 	return {
 		projectRefreshIntervalMs: parseProjectRefreshIntervalMs(config.projectRefreshIntervalMs),
-		footerFormat: stringValue(config, "footerFormat") ?? "",
+		footerFormat: stringValue(config, "footerFormat") ?? DEFAULT_FOOTER_FORMAT,
 		separator: parseSeparatorStyle(config.separator),
 		contextStyle: parseContextStyle(config.contextStyle),
 		contextThresholds: parseContextThresholds(config.contextThresholds),
 		pathDisplay: parsePathDisplay(config.pathDisplay),
-		gitBranch,
-		icons: resolveConfiguredIcons(iconMode, iconOverrides),
-		colors: {
-			...defaultConfig.colors,
-			...colors,
-		},
-		colorSources: { ...colorSources },
-		features: { ...features },
-		footerSegments: { ...footerSegments },
-		gitCommit,
-		gitMetrics,
-		extensionStatuses: {
-			defaultPlacement: extensionStatuses.defaultPlacement,
-			placements: { ...extensionStatuses.placements },
-			colorModes: { ...extensionStatuses.colorModes },
-		},
-		fixedEditor,
+		gitBranch: parseGitBranchConfig(config.gitBranch),
+		icons: resolveConfiguredIcons(
+			normalizeIconMode(iconsRecord.mode),
+			normalizeIconOverrides(iconsRecord),
+		),
+		colors: { ...DEFAULT_COLORS, ...colors },
+		colorSources: isRecord(config.colorSources)
+			? normalizeColorSources(config.colorSources)
+			: { ...DEFAULT_COLOR_SOURCES },
+		features: isRecord(config.features)
+			? normalizeUiFeatures(config.features)
+			: { ...DEFAULT_FEATURES },
+		animations: normalizeAnimations(config.animations),
+		footerSegments: isRecord(config.footerSegments)
+			? normalizeFooterSegments(config.footerSegments)
+			: { ...DEFAULT_FOOTER_SEGMENTS },
+		gitCommit: isRecord(config.gitCommit)
+			? normalizeGitCommitConfig(config.gitCommit)
+			: { ...DEFAULT_GIT_COMMIT },
+		gitMetrics: isRecord(config.gitMetrics)
+			? normalizeGitMetricsConfig(config.gitMetrics)
+			: { ...DEFAULT_GIT_METRICS },
+		extensionStatuses,
 	};
 }
+
+/** Built-in defaults: exactly what an empty or missing config file resolves to. */
+export const defaultConfig: PolishedTuiConfig = mergeConfig({});
 
 export function getExtensionStatusPlacement(
 	config: PolishedTuiConfig,
 	key: string,
 ): ExtensionStatusPlacement {
-	return config.extensionStatuses.placements[key] ?? config.extensionStatuses.defaultPlacement;
+	const placements = config.extensionStatuses.placements;
+	const placement = Object.hasOwn(placements, key) ? placements[key] : undefined;
+	return isExtensionStatusPlacement(placement)
+		? placement
+		: config.extensionStatuses.defaultPlacement;
 }
 
 export function getExtensionStatusColorMode(
 	config: PolishedTuiConfig,
 	key: string,
 ): ExtensionStatusColorMode {
-	return config.extensionStatuses.colorModes[key] ?? DEFAULT_EXTENSION_STATUS_COLOR_MODE;
+	const colorModes = config.extensionStatuses.colorModes;
+	const colorMode = Object.hasOwn(colorModes, key) ? colorModes[key] : undefined;
+	return isExtensionStatusColorMode(colorMode) ? colorMode : DEFAULT_EXTENSION_STATUS_COLOR_MODE;
 }
 
-export function loadConfig(): PolishedTuiConfig {
-	try {
-		if (!existsSync(configPath)) return mergeConfig({});
-		return mergeConfig(JSON.parse(readFileSync(configPath, "utf8")));
-	} catch {
-		return mergeConfig({});
+export type ConfigLoadResult = {
+	config: PolishedTuiConfig;
+	/** Set when the file exists but cannot be read or parsed; defaults are used instead. */
+	problem?: string;
+	/** The file still enables the removed fixed-editor feature. */
+	legacyFixedEditorEnabled: boolean;
+	/** Any obsolete `fixedEditor` block is present (cleaned up silently unless it was enabled). */
+	hasLegacyFixedEditor: boolean;
+};
+
+function describeError(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+export function loadConfigWithDiagnostics(path = configPath): ConfigLoadResult {
+	const state = readConfigFileState(path);
+	if (state.kind === "corrupt") {
+		return {
+			config: mergeConfig({}),
+			problem: `${path}: ${describeError(state.error)}`,
+			legacyFixedEditorEnabled: false,
+			hasLegacyFixedEditor: false,
+		};
 	}
+	const legacy = state.record.fixedEditor;
+	return {
+		config: mergeConfig(state.record),
+		legacyFixedEditorEnabled: isRecord(legacy) && legacy.enabled === true,
+		hasLegacyFixedEditor: legacy !== undefined,
+	};
+}
+
+export function loadConfig(path = configPath): PolishedTuiConfig {
+	return loadConfigWithDiagnostics(path).config;
+}
+
+/** Drop the obsolete `fixedEditor` block (feature removed; Pi has native fullscreen mode). */
+export function removeLegacyFixedEditorConfig(path = configPath): PolishedTuiConfig {
+	return mutateConfig(path, (record) => {
+		delete record.fixedEditor;
+	});
 }
 
 export function saveColorSourcesPatch(
@@ -897,21 +869,6 @@ export function saveSeparatorPatch(
 ): PolishedTuiConfig {
 	return mutateConfig(path, (record) => {
 		record.separator = parseSeparatorStyle(separator);
-	});
-}
-
-export function saveContextThresholdsPatch(
-	thresholds: Partial<ContextThresholds>,
-	path = configPath,
-): PolishedTuiConfig {
-	return mutateConfig(path, (record) => {
-		const existing = isRecord(record.contextThresholds)
-			? { ...(record.contextThresholds as Record<string, unknown>) }
-			: {};
-		record.contextThresholds = {
-			...existing,
-			...thresholds,
-		};
 	});
 }
 
@@ -997,19 +954,13 @@ export function saveExtensionStatusColorMode(
 	});
 }
 
-export function saveFixedEditorPatch(
-	patch: Partial<FixedEditorConfig>,
+export function saveAnimationsPatch(
+	patch: Partial<AnimationsConfig>,
 	path = configPath,
 ): PolishedTuiConfig {
 	return mutateConfig(path, (record) => {
-		const existing = isRecord(record.fixedEditor)
-			? { ...(record.fixedEditor as Record<string, unknown>) }
-			: {};
-		record.fixedEditor = {
-			...existing,
-			...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
-			...(patch.mouseScroll !== undefined ? { mouseScroll: patch.mouseScroll } : {}),
-			...(patch.copyNotice !== undefined ? { copyNotice: patch.copyNotice } : {}),
-		};
+		const existing = isRecord(record.animations) ? { ...record.animations } : {};
+		if (typeof patch.footerPulse === "boolean") existing.footerPulse = patch.footerPulse;
+		record.animations = existing;
 	});
 }

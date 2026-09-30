@@ -1,23 +1,25 @@
-export const ZENTUI_PROTOTYPE_PATCH_REGISTRY = Symbol.for("pi-zentui.prototype-patch-registry");
+// Pack-unique key: upstream pi-zentui uses "pi-zentui.prototype-patch-registry"; sharing it
+// would let the two packages clobber each other's records when both are installed.
+export const ZENTUI_PROTOTYPE_PATCH_REGISTRY = Symbol.for(
+	"pi-sakura-cyberdeck.zentui.prototype-patch-registry",
+);
 
-type PrototypePatchAdapter =
+export type PrototypePatchAdapter =
 	| "user-message-render"
-	| "user-message-invalidate"
 	| "selector-border-render"
 	| "tool-execution-render"
-	| "tool-execution-invalidate"
-	| "assistant-thinking-content";
+	| "tool-execution-mouse";
 
-type PrototypeMethodName = "render" | "invalidate" | "updateContent";
+export type PrototypeMethodName = "render" | "handleMouse";
 type PrototypeMethod = (this: unknown, ...args: unknown[]) => unknown;
 
-type PatchInvocation = {
+export type PatchInvocation = {
 	predecessor: PrototypeMethod;
 	receiver: unknown;
 	args: unknown[];
 };
 
-type PatchBehavior = (invocation: PatchInvocation) => unknown;
+export type PatchBehavior = (invocation: PatchInvocation) => unknown;
 
 type Registration = {
 	token: symbol;
@@ -26,18 +28,27 @@ type Registration = {
 
 type PatchRecord = {
 	method: PrototypeMethodName;
-	predecessor: PrototypeMethod;
+	/** True when the method was an own property of the target before we wrapped it. */
+	hadOwn: boolean;
+	/** Own predecessor; unused when `hadOwn` is false (resolved through the prototype chain per call). */
+	predecessor?: PrototypeMethod;
 	wrapper: PrototypeMethod;
 	registration?: Registration;
 };
 
 type PatchRegistry = Map<PrototypePatchAdapter, PatchRecord>;
-
 type PatchTarget = Record<PropertyKey, unknown>;
 
-function registryFor(target: PatchTarget): PatchRegistry {
+function ownRegistry(target: PatchTarget): PatchRegistry | undefined {
+	// Own-property lookup only: a parent prototype's registry must never be reused.
+	if (!Object.prototype.hasOwnProperty.call(target, ZENTUI_PROTOTYPE_PATCH_REGISTRY)) return undefined;
 	const existing = target[ZENTUI_PROTOTYPE_PATCH_REGISTRY];
-	if (existing instanceof Map) return existing as PatchRegistry;
+	return existing instanceof Map ? (existing as PatchRegistry) : undefined;
+}
+
+function registryFor(target: PatchTarget): PatchRegistry {
+	const existing = ownRegistry(target);
+	if (existing) return existing;
 	const registry: PatchRegistry = new Map();
 	Object.defineProperty(target, ZENTUI_PROTOTYPE_PATCH_REGISTRY, {
 		value: registry,
@@ -46,30 +57,52 @@ function registryFor(target: PatchTarget): PatchRegistry {
 	return registry;
 }
 
-function createCleanup(
-	target: PatchTarget,
-	method: PrototypeMethodName,
-	adapter: PrototypePatchAdapter,
-	registry: PatchRegistry,
-	record: PatchRecord,
-	token: symbol,
-): () => void {
-	let cleaned = false;
-	return () => {
-		if (cleaned) return;
-		cleaned = true;
-		if (record.registration?.token !== token) return;
-		record.registration.behavior = undefined;
-		record.registration = undefined;
+function isReusable(record: PatchRecord | undefined, method: PrototypeMethodName): record is PatchRecord {
+	return (
+		record !== undefined &&
+		record.method === method &&
+		typeof record.wrapper === "function" &&
+		typeof record.hadOwn === "boolean"
+	);
+}
 
-		const current = registry.get(adapter);
-		if (current !== record) return;
-		if (target[method] === record.wrapper) target[method] = record.predecessor;
-		registry.delete(adapter);
-		if (registry.size === 0) delete target[ZENTUI_PROTOTYPE_PATCH_REGISTRY];
+function resolvePredecessor(target: PatchTarget, record: PatchRecord): PrototypeMethod | undefined {
+	if (record.hadOwn) return record.predecessor;
+	// Inherited method: look it up on the parent each call so later patches to the parent
+	// (e.g. Container.prototype.render) stay visible through our wrapper.
+	const parent = Object.getPrototypeOf(target) as PatchTarget | null;
+	const inherited = parent?.[record.method];
+	return typeof inherited === "function" ? (inherited as PrototypeMethod) : undefined;
+}
+
+function createWrapper(target: PatchTarget, record: PatchRecord): PrototypeMethod {
+	return function sakuraPrototypeWrapper(this: unknown, ...args: unknown[]): unknown {
+		const predecessor = resolvePredecessor(target, record);
+		if (!predecessor) return undefined;
+		const behavior = record.registration?.behavior;
+		if (!behavior) return Reflect.apply(predecessor, this, args);
+		return behavior({ predecessor, receiver: this, args });
 	};
 }
 
+function restore(target: PatchTarget, registry: PatchRegistry, adapter: PrototypePatchAdapter, record: PatchRecord): void {
+	if (target[record.method] !== record.wrapper) {
+		// Someone wrapped on top of us: removing our wrapper would cut them off. Leave it in the
+		// chain as a passthrough and keep the record so a later install reuses it (no stacking).
+		return;
+	}
+	if (record.hadOwn) target[record.method] = record.predecessor;
+	else delete target[record.method];
+	registry.delete(adapter);
+	if (registry.size === 0) delete target[ZENTUI_PROTOTYPE_PATCH_REGISTRY];
+}
+
+/**
+ * Wrap `target[method]` once per adapter and route calls to `behavior` until the returned cleanup runs.
+ * Reinstalling reuses the existing wrapper (also when another extension wrapped on top of it), so
+ * repeated session starts never stack wrappers. Cleanup restores the original own method, or deletes
+ * the own property when the method was inherited.
+ */
 export function installPrototypePatch(
 	targetValue: object,
 	method: PrototypeMethodName,
@@ -80,32 +113,34 @@ export function installPrototypePatch(
 	const registry = registryFor(target);
 	let record = registry.get(adapter);
 
-	if (!(record && record.method === method && target[method] === record.wrapper)) {
-		const predecessor = target[method];
-		if (typeof predecessor !== "function") {
+	if (!isReusable(record, method)) {
+		const current = target[method];
+		if (typeof current !== "function") {
+			if (registry.size === 0) delete target[ZENTUI_PROTOTYPE_PATCH_REGISTRY];
 			throw new TypeError(`Cannot patch ${method}: predecessor is not a function`);
 		}
-		const nextRecord: PatchRecord = {
+		const hadOwn = Object.prototype.hasOwnProperty.call(target, method);
+		const next: PatchRecord = {
 			method,
-			predecessor: predecessor as PrototypeMethod,
+			hadOwn,
+			predecessor: hadOwn ? (current as PrototypeMethod) : undefined,
 			wrapper: () => undefined,
 		};
-		const wrapper: PrototypeMethod = function zentuiPrototypeWrapper(
-			this: unknown,
-			...args: unknown[]
-		): unknown {
-			const activeBehavior = nextRecord.registration?.behavior;
-			return activeBehavior
-				? activeBehavior({ predecessor: nextRecord.predecessor, receiver: this, args })
-				: Reflect.apply(nextRecord.predecessor, this, args);
-		};
-		nextRecord.wrapper = wrapper;
-		record = nextRecord;
-		registry.set(adapter, record);
-		target[method] = wrapper;
+		next.wrapper = createWrapper(target, next);
+		registry.set(adapter, next);
+		target[method] = next.wrapper;
+		record = next;
 	}
 
+	const active = record;
 	const token = Symbol(adapter);
-	record.registration = { token, behavior };
-	return createCleanup(target, method, adapter, registry, record, token);
+	active.registration = { token, behavior };
+	let cleaned = false;
+	return () => {
+		if (cleaned) return;
+		cleaned = true;
+		if (active.registration?.token !== token) return;
+		active.registration = undefined;
+		if (registry.get(adapter) === active) restore(target, registry, adapter, active);
+	};
 }
