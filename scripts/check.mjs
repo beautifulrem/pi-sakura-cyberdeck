@@ -9,6 +9,10 @@ const manifest = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"
 assert.equal(manifest.name, "pi-sakura-cyberdeck");
 assert.equal(manifest.keywords.includes("pi-package"), true);
 
+// Subscription quota functionality must not be shipped or loaded.
+assert.equal(manifest.pi.extensions.some((path) => path.includes("dual-quota")), false);
+await assert.rejects(access(resolve(root, "extensions/dual-quota")), { code: "ENOENT" });
+
 for (const path of [...manifest.pi.extensions, ...manifest.pi.themes]) {
   await access(resolve(root, path));
 }
@@ -66,6 +70,7 @@ assert.match(shimmer, /parts\.push\(rgbAnsi\(MUTED, formatDigital\(elapsed\)\)\)
 
 // Pi 0.84+: fixed editor must stay off by default and hard-block native sticky TUI layouts.
 const zentuiConfig = await readFile(resolve(root, "extensions/zentui/config.ts"), "utf8");
+assert.doesNotMatch(zentuiConfig, /dual-subscription-quota/);
 assert.match(
   zentuiConfig,
   /fixedEditor:\s*\{\s*\/\/[\s\S]*?enabled:\s*false|fixedEditor:\s*\{\s*enabled:\s*false/,
@@ -77,6 +82,6 @@ const fixedEditorIndex = await readFile(
 assert.match(fixedEditorIndex, /function isNativeStickyEditorPi/);
 assert.match(fixedEditorIndex, /Hard block on Pi 0\.84\+/);
 assert.match(fixedEditorIndex, /if \(isNativeStickyEditorPi\(tui\)\)/);
-assert.equal(manifest.version, "1.1.5");
+assert.equal(manifest.version, "1.1.6");
 
 console.log("pi-sakura-cyberdeck package check passed");
