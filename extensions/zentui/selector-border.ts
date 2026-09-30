@@ -1,74 +1,63 @@
 import {
+	DynamicBorder,
 	ModelSelectorComponent,
 	SettingsSelectorComponent,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import type { PolishedTuiConfig } from "./config";
-import { installPrototypePatch } from "./prototype-patch-registry";
 import { renderSakuraFrameGradient } from "./gradient";
+import { installPrototypePatch } from "./prototype-patch-registry";
 
-type PatchableSelectorPrototype = {
-	render: (width: number) => string[];
-};
+/**
+ * Recolor the top/bottom DynamicBorder hairlines of Pi's model and settings selectors with the
+ * sakura frame gradient. Only rows produced by a DynamicBorder child at the first/last position
+ * are touched, and only when they are a plain `─` run; anything else renders stock.
+ */
 
 type Cleanup = () => void;
+type SelectorLike = { children?: unknown };
 
-function stripAnsi(text: string): string {
-	return text.replaceAll(/\x1b\[[0-9;]*m/g, "");
+const SGR = /\x1b\[[0-9;]*m/g;
+
+function isHairline(line: unknown): boolean {
+	if (typeof line !== "string") return false;
+	const plain = line.replace(SGR, "");
+	return plain.length > 0 && /^─+$/.test(plain);
 }
 
-function isHorizontalBorderLine(line: string): boolean {
-	return /^─+$/.test(stripAnsi(line));
-}
+export function patchSelectorBorderStyle(prototype: object): Cleanup {
+	return installPrototypePatch(prototype, "render", "selector-border-render", ({ predecessor, receiver, args }) => {
+		const rendered = Reflect.apply(predecessor, receiver, args);
+		const width = args[0];
+		if (!Array.isArray(rendered) || rendered.length < 2 || typeof width !== "number" || width <= 0) {
+			return rendered;
+		}
+		const children = (receiver as SelectorLike).children;
+		if (!Array.isArray(children) || children.length < 2) return rendered;
+		const firstIsBorder = children[0] instanceof DynamicBorder;
+		const lastIsBorder = children[children.length - 1] instanceof DynamicBorder;
+		if (!firstIsBorder && !lastIsBorder) return rendered;
 
-function renderBorderLine(
-	width: number,
-	_theme: Theme | undefined,
-	_config: PolishedTuiConfig | undefined,
-): string {
-	const text = "─".repeat(Math.max(1, width));
-	return renderSakuraFrameGradient(text);
-}
-
-export function patchSelectorBorderStyle(
-	prototype: PatchableSelectorPrototype,
-	getTheme?: () => Theme | undefined,
-	getConfig?: () => PolishedTuiConfig,
-): Cleanup {
-	return installPrototypePatch(
-		prototype,
-		"render",
-		"selector-border-render",
-		({ predecessor, receiver, args }) => {
-			const lines = Reflect.apply(predecessor, receiver, args) as string[];
-			const width = args[0];
-			if (lines.length === 0 || typeof width !== "number" || width <= 0) return lines;
-
-			return lines.map((line, index) => {
-				if (index !== 0 && index !== lines.length - 1) return line;
-				if (!isHorizontalBorderLine(line)) return line;
-				return renderBorderLine(width, getTheme?.(), getConfig?.());
-			});
-		},
-	);
+		const last = rendered.length - 1;
+		const recolorFirst = firstIsBorder && isHairline(rendered[0]);
+		const recolorLast = lastIsBorder && isHairline(rendered[last]);
+		if (!recolorFirst && !recolorLast) return rendered;
+		const lines = [...(rendered as string[])];
+		const gradient = renderSakuraFrameGradient("─".repeat(width));
+		if (recolorFirst) lines[0] = gradient;
+		if (recolorLast) lines[last] = gradient;
+		return lines;
+	});
 }
 
 export function installSelectorBorderStyle(
-	getTheme?: () => Theme | undefined,
-	getConfig?: () => PolishedTuiConfig,
+	_getTheme?: () => Theme | undefined,
+	_getConfig?: () => PolishedTuiConfig,
 ): Cleanup {
-	const cleanupModel = patchSelectorBorderStyle(
-		ModelSelectorComponent.prototype as unknown as PatchableSelectorPrototype,
-		getTheme,
-		getConfig,
-	);
-	const cleanupSettings = patchSelectorBorderStyle(
-		SettingsSelectorComponent.prototype as unknown as PatchableSelectorPrototype,
-		getTheme,
-		getConfig,
+	const cleanups = [ModelSelectorComponent.prototype, SettingsSelectorComponent.prototype].map((prototype) =>
+		patchSelectorBorderStyle(prototype),
 	);
 	return () => {
-		cleanupModel();
-		cleanupSettings();
+		for (const cleanup of cleanups.reverse()) cleanup();
 	};
 }
