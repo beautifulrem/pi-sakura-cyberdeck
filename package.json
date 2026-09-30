@@ -22,6 +22,10 @@
   ],
   "scripts": {
     "check": "node scripts/check.mjs",
+    "dev:setup": "node scripts/dev-setup.mjs",
+    "typecheck": ".dev/node_modules/.bin/tsc -p tsconfig.json",
+    "test": "node --import ./test/register.mjs --test \"test/**/*.test.ts\"",
+    "verify": "npm run check && npm run typecheck && npm test",
     "pack:check": "npm pack --dry-run"
   },
   "peerDependencies": {
