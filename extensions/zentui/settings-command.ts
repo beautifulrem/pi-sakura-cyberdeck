@@ -112,6 +112,7 @@ const featureSettingLabels: Record<FeatureSettingId, string> = {
 	editor: "Editor",
 	statusLine: "Status line",
 	messageStyle: "Message & tool styling",
+	thinkingTrail: "Thought trail",
 	copyFriendly: "Copy-friendly mode",
 };
 
@@ -120,6 +121,8 @@ const featureSettingDescriptions: Record<FeatureSettingId, string> = {
 	statusLine: "Enable or disable Zentui's custom footer/status line.",
 	messageStyle:
 		"Style previous user messages, tool blocks, thinking labels and selector borders. Independent of the editor.",
+	thinkingTrail:
+		"Collapse visible thinking blocks into a compact \"✦ Thought trail\" digest. Display-only; Ctrl+T still toggles thinking.",
 	copyFriendly:
 		"Hide editor and previous-message rail glyphs for cleaner native terminal selection.",
 };
@@ -177,6 +180,9 @@ const directTargets: Record<string, DirectTarget> = {
 	footer: "statusLine",
 	messages: "messageStyle",
 	"message-style": "messageStyle",
+	"thinking-trail": "thinkingTrail",
+	thinking: "thinkingTrail",
+	trail: "thinkingTrail",
 	"copy-friendly": "copyFriendly",
 	copyfriendly: "copyFriendly",
 	copy: "copyFriendly",
