@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { access, readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { stripTypeScriptTypes } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -28,23 +29,9 @@ assert.ok(
 	!manifest.scripts.test.includes("experimental-transform-types"),
 	"test script must not rely on the removed --experimental-transform-types flag",
 );
-function assertNoParameterProperties(file, source) {
-	for (const match of source.matchAll(/\bconstructor\s*\(/g)) {
-		let depth = 1;
-		let index = match.index + match[0].length;
-		const start = index;
-		while (index < source.length && depth > 0) {
-			const ch = source[index];
-			if (ch === "(") depth += 1;
-			else if (ch === ")") depth -= 1;
-			index += 1;
-		}
-		const params = source.slice(start, index - 1);
-		assert.ok(
-			!/^\s*(private|public|protected|readonly)\s/m.test(params),
-			`${file}: constructor parameter properties break Node type stripping`,
-		);
-	}
+function assertErasableTypes(file, source) {
+	// Node parses without executing: catches parameter properties anywhere, enums and namespaces too.
+	assert.doesNotThrow(() => stripTypeScriptTypes(source, { mode: "strip" }), `${file}: unsupported Node type-stripping syntax`);
 }
 
 // Every declared resource exists; removed components stay removed.
@@ -65,14 +52,14 @@ async function listTs(dir) {
 }
 for (const file of await listTs("extensions")) {
 	const source = await read(file);
-	assertNoParameterProperties(file, source);
+	assertErasableTypes(file, source);
 	for (const [, spec] of source.matchAll(/from\s+"([^".][^"]*)"/g)) {
 		if (spec.startsWith("node:")) continue;
 		assert.ok(spec in (manifest.peerDependencies ?? {}), `${file} imports undeclared package ${spec}`);
 	}
 }
 for (const file of await listTs("test")) {
-	assertNoParameterProperties(file, await read(file));
+	assertErasableTypes(file, await read(file));
 }
 
 // Shipped files: runtime resources + docs only.

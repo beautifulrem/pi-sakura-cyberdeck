@@ -4,6 +4,7 @@ import { getColorMode, paintFg, type RGB } from "../shared/color";
 import type { PolishedTuiConfig } from "./config";
 import { renderSakuraFrameGradient } from "./gradient";
 import { installPrototypePatch } from "./prototype-patch-registry";
+import { safeThemeFg } from "./style";
 
 /**
  * User prompt chrome: gradient hairlines above/below plus a sakura rail on the left.
@@ -40,8 +41,8 @@ function railFor(config: PolishedTuiConfig | undefined): { text: string; columns
 	return { text, columns: visibleWidth(text) };
 }
 
-export function renderUserMessageCard(inner: readonly string[], width: number, rail: string): string[] {
-	const border = renderSakuraFrameGradient("─".repeat(width));
+export function renderUserMessageCard(inner: readonly string[], width: number, rail: string,
+	border = renderSakuraFrameGradient("─".repeat(width))): string[] {
 	const lines: string[] = [border];
 	for (const line of inner) lines.push(rail ? `${rail}${line}` : line);
 	lines.push(border);
@@ -49,7 +50,7 @@ export function renderUserMessageCard(inner: readonly string[], width: number, r
 }
 
 export function installUserMessageStyle(
-	_getTheme?: () => Theme | undefined,
+	getTheme?: () => Theme | undefined,
 	getConfig?: () => PolishedTuiConfig,
 ): Cleanup {
 	const cards = new WeakMap<object, UserMessageCard>();
@@ -62,13 +63,16 @@ export function installUserMessageStyle(
 			if (typeof width !== "number" || width < MIN_WIDTH) {
 				return Reflect.apply(predecessor, receiver, args);
 			}
-			const rail = railFor(getConfig?.());
+			const config = getConfig?.();
+			const rail = railFor(config);
 			const inner = Reflect.apply(predecessor, receiver, [width - rail.columns, ...args.slice(1)]);
 			if (!Array.isArray(inner) || inner.length === 0) return inner;
 
 			const lines = inner as string[];
-			const colorMode = getColorMode();
-			const chromeKey = `${rail.text}\0${colorMode}`;
+			const theme = config?.colorSources?.userMessages === "theme" ? getTheme?.() : undefined;
+			const border = theme ? safeThemeFg(theme, "borderMuted", "─".repeat(width)) : renderSakuraFrameGradient("─".repeat(width));
+			const paintedRail = theme ? safeThemeFg(theme, "accent", rail.text) : paintFg(RAIL_RGB, rail.text);
+			const chromeKey = `${paintedRail}\0${border}\0${getColorMode()}`;
 			const cached = cards.get(receiver as object);
 			if (
 				cached &&
@@ -78,7 +82,7 @@ export function installUserMessageStyle(
 			) {
 				return cached.lines;
 			}
-			const card = renderUserMessageCard(lines, width, rail.text ? paintFg(RAIL_RGB, rail.text) : "");
+			const card = renderUserMessageCard(lines, width, rail.text ? paintedRail : "", border);
 			cards.set(receiver as object, { width, chromeKey, inner: lines, lines: card });
 			return card;
 		},

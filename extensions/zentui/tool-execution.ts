@@ -3,6 +3,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { getColorMode, paintFg, type RGB } from "../shared/color";
 import { renderSakuraFrameGradient } from "./gradient";
 import { installPrototypePatch } from "./prototype-patch-registry";
+import { safeThemeFg } from "./style";
 
 /**
  * Tool card chrome: sakura gradient title frame + status rail around Pi's own tool rendering.
@@ -40,6 +41,7 @@ type CardRender = {
 	expanded: boolean;
 	name: string;
 	colorMode: string;
+	statusStyle: string;
 	added: number;
 	removed: number;
 	/** Number of leading inner lines kept outside the frame (Pi's spacer row). */
@@ -48,7 +50,7 @@ type CardRender = {
 	lines: string[];
 };
 
-// Theme-independent status hues (sakura-macaron.json roles): sky = running, mint = ok, coral = error.
+// Fallback only when no active theme is available. Semantic status follows Pi's theme.
 const STATUS_RGB: Record<ToolStatus, RGB> = {
 	running: [159, 211, 242],
 	ok: [174, 229, 197],
@@ -101,10 +103,20 @@ export function diffStats(diff: string | undefined): DiffStats | undefined {
 	if (typeof diff !== "string" || !diff) return undefined;
 	let added = 0;
 	let removed = 0;
+	let oldLeft = 0;
+	let newLeft = 0;
 	for (const line of diff.split("\n")) {
-		if (line.startsWith("+++") || line.startsWith("---")) continue;
-		if (line.startsWith("+")) added += 1;
-		else if (line.startsWith("-")) removed += 1;
+		const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+		if (hunk) {
+			oldLeft = Number(hunk[2] ?? 1);
+			newLeft = Number(hunk[4] ?? 1);
+			continue;
+		}
+		const inHunk = oldLeft > 0 || newLeft > 0;
+		if (!inHunk && (line.startsWith("+++") || line.startsWith("---"))) continue;
+		if (line.startsWith("+")) { added += 1; newLeft = Math.max(0, newLeft - 1); }
+		else if (line.startsWith("-")) { removed += 1; oldLeft = Math.max(0, oldLeft - 1); }
+		else if (line.startsWith(" ")) { oldLeft = Math.max(0, oldLeft - 1); newLeft = Math.max(0, newLeft - 1); }
 	}
 	return added || removed ? { added, removed } : undefined;
 }
@@ -157,12 +169,20 @@ function buildCard(
 	status: ToolStatus,
 	name: string,
 	stats: DiffStats | undefined,
+	theme: Theme | undefined,
 ): { lines: string[]; prefix: number } {
 	const prefix = inner[0] === "" ? 1 : 0; // Pi's Spacer(1) row stays above the frame
-	const left = paintFg(STATUS_RGB[status], LEFT_RAIL);
+	const role = status === "error" ? "error" : status === "ok" ? "success" : "toolTitle";
+	const left = theme ? safeThemeFg(theme, role, LEFT_RAIL) : paintFg(STATUS_RGB[status], LEFT_RAIL);
 	const right = paintFg(FRAME_RGB, RIGHT_RAIL);
 	const lines: string[] = inner.slice(0, prefix);
-	lines.push(renderSakuraFrameGradient(frameTop(statusText(status, name, stats), width)));
+	const label = statusText(status, name, stats);
+	const top = frameTop(label, width);
+	lines.push(theme
+		? top.includes(label)
+			? renderSakuraFrameGradient(top.slice(0, 3)) + safeThemeFg(theme, role, label) + renderSakuraFrameGradient(top.slice(3 + label.length))
+			: safeThemeFg(theme, role, top)
+		: renderSakuraFrameGradient(top));
 	for (let i = prefix; i < inner.length; i++) lines.push(`${left}${inner[i]}${right}`);
 	lines.push(renderSakuraFrameGradient(frameBottom(width)));
 	return { lines, prefix };
@@ -184,7 +204,7 @@ export function mapCardMouseEvent<T extends MouseEventLike>(event: T, card: Card
 	return { ...event, y, x, width: card.innerWidth, height: inner.length };
 }
 
-export function installToolExecutionStyle(_getTheme?: () => Theme | undefined): Cleanup {
+export function installToolExecutionStyle(getTheme?: () => Theme | undefined): Cleanup {
 	const cards = new WeakMap<object, CardRender>();
 
 	const cleanupRender = installPrototypePatch(
@@ -216,6 +236,9 @@ export function installToolExecutionStyle(_getTheme?: () => Theme | undefined): 
 			const expanded = runtime.expanded === true;
 			const name = toolLabelName(runtime);
 			const colorMode = getColorMode();
+			const theme = getTheme?.();
+			const role = status === "error" ? "error" : status === "ok" ? "success" : "toolTitle";
+			const statusStyle = theme ? safeThemeFg(theme, role, "x") : "";
 			const details = runtime.result?.details as { diff?: unknown } | undefined;
 			const stats = diffStats(typeof details?.diff === "string" ? details.diff : undefined);
 			const cached = cards.get(receiver as object);
@@ -226,6 +249,7 @@ export function installToolExecutionStyle(_getTheme?: () => Theme | undefined): 
 				cached.expanded === expanded &&
 				cached.name === name &&
 				cached.colorMode === colorMode &&
+				cached.statusStyle === statusStyle &&
 				cached.added === (stats?.added ?? 0) &&
 				cached.removed === (stats?.removed ?? 0) &&
 				sameLines(cached.inner, lines)
@@ -233,7 +257,7 @@ export function installToolExecutionStyle(_getTheme?: () => Theme | undefined): 
 				return cached.lines;
 			}
 
-			const card = buildCard(lines, width, status, name, stats);
+			const card = buildCard(lines, width, status, name, stats, theme);
 			cards.set(receiver as object, {
 				width,
 				innerWidth,
@@ -241,6 +265,7 @@ export function installToolExecutionStyle(_getTheme?: () => Theme | undefined): 
 				expanded,
 				name,
 				colorMode,
+				statusStyle,
 				added: stats?.added ?? 0,
 				removed: stats?.removed ?? 0,
 				prefix: card.prefix,

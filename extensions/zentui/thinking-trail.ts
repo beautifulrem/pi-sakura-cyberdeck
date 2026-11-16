@@ -1,5 +1,6 @@
 import type { MarkdownTransformContext, MarkdownTransformer } from "@earendil-works/pi-coding-agent";
-import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { sanitizeDisplayText } from "./extension-status";
 import { type RGB, fgAnsi, getColorMode } from "../shared/color";
 import { renderSakuraGradient, renderSakuraGradientOpen } from "./gradient";
 
@@ -44,7 +45,14 @@ function paintRail(rail: string, text: string): string {
 }
 
 function collapse(text: string): string {
-	return text.replace(/\s+/g, " ").trim();
+	return sanitizeDisplayText(text.replace(/\s+/g, " ")).trim();
+}
+
+/** Keep Markdown/math/link parsing from consuming a prewrapped row or its rails. */
+function literalRow(row: string): string {
+	const runs = row.match(/`+/g) ?? [];
+	const fence = "`".repeat(Math.max(0, ...runs.map((run) => run.length)) + 1);
+	return `${fence} ${row} ${fence}`;
 }
 
 /** First non-empty line of each blank-line-separated paragraph = one "step". */
@@ -61,9 +69,10 @@ export function buildThinkingTrail(markdown: string, availableWidth = DEFAULT_WI
 	const steps = thinkingSteps(markdown);
 	if (steps.length === 0) return undefined;
 
-	const width =
-		Number.isFinite(availableWidth) && availableWidth > RAIL_WIDTH ? availableWidth : DEFAULT_WIDTH;
-	const contentWidth = Math.max(1, width - RAIL_WIDTH);
+	const width = Number.isFinite(availableWidth) ? Math.floor(availableWidth) : DEFAULT_WIDTH;
+	// A two-cell grapheme must fit beside the rail. Let Pi render normally below that.
+	if (width < RAIL_WIDTH + 2) return undefined;
+	const contentWidth = width - RAIL_WIDTH;
 	const wrapped = steps.map((step) => {
 		const lines = wrapTextWithAnsi(step, contentWidth);
 		return lines.length > 0 ? lines : [""];
@@ -75,7 +84,7 @@ export function buildThinkingTrail(markdown: string, availableWidth = DEFAULT_WI
 		steps.length > 1
 			? `${THOUGHT_TRAIL_GLYPH} Thought trail · ${steps.length} steps`
 			: `${THOUGHT_TRAIL_GLYPH} Thought trail`;
-	const lines = [renderSakuraGradient(label)];
+	const lines = [renderSakuraGradient(sanitizeDisplayText(truncateToWidth(label, width)))];
 
 	let emitted = 0;
 	for (let i = 0; i < wrapped.length && emitted < MAX_BODY_LINES; i++) {
@@ -83,11 +92,11 @@ export function buildThinkingTrail(markdown: string, availableWidth = DEFAULT_WI
 		const isLastStep = i === wrapped.length - 1 && complete;
 		for (let j = 0; j < stepLines.length && emitted < MAX_BODY_LINES; j++) {
 			const prefix = j > 0 ? (isLastStep ? RAIL_CONT_LAST : RAIL_CONT) : isLastStep ? RAIL_LAST : RAIL_OPEN;
-			lines.push(paintRail(prefix, stepLines[j]!));
+			lines.push(literalRow(paintRail(prefix, stepLines[j]!)));
 			emitted += 1;
 		}
 	}
-	if (!complete) lines.push(paintRail("╰─ ", `… +${totalLines - emitted} more`));
+	if (!complete) lines.push(literalRow(paintRail("╰─ ", truncateToWidth(`… +${totalLines - emitted} more`, width - 3))));
 
 	return lines.join(HARD_BREAK);
 }

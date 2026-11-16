@@ -52,6 +52,7 @@ import { applyProjectRefreshToState } from "./project-state";
 import { readRuntimeInfo } from "./runtime";
 import { installSelectorBorderStyle } from "./selector-border";
 import { SessionLifecycle } from "./session-lifecycle";
+import { registerShellCallRenderer } from "./shell-call";
 import { fixedEditorRemovedMessage, registerZentuiSettingsCommand } from "./settings-command";
 import { createInitialState, type FooterState, syncState } from "./state";
 import { applyThinkingLabel } from "./thinking-message";
@@ -143,6 +144,7 @@ export default function (pi: ExtensionAPI) {
 	// Public, display-only markdown transformer (Pi >= 0.87.1): compress visible thinking
 	// blocks into a compact trail. Registered once; toggling the feature is read live.
 	registerThinkingTrail(pi, () => currentConfig.features.thinkingTrail);
+	registerShellCallRenderer(pi, () => currentConfig.features.messageStyle);
 	const getThinkingLevel = () =>
 		sessionLifecycle.isCurrent() ? pi.getThinkingLevel() : ("off" as const);
 	const getProbePlan = (): ProjectProbePlan => {
@@ -199,6 +201,7 @@ export default function (pi: ExtensionAPI) {
 
 	const refreshInteractiveState = (ctx: ExtensionContext, project = false) => {
 		if (!sessionLifecycle.isCurrent() || !isTuiContext(ctx)) return;
+		reconcileEditor(ctx);
 		syncState(state, ctx);
 		if (project) scheduleProjectRefresh(ctx);
 		refresh();
@@ -460,7 +463,7 @@ export default function (pi: ExtensionAPI) {
 			if (loaded.legacyFixedEditorEnabled) {
 				let tuiMode: string | undefined;
 				try {
-					tuiMode = pi.getSettings()?.tuiMode;
+					tuiMode = pi.getSettings()?.tuiMode ?? "fullscreen";
 				} catch {
 					// Older hosts without getSettings(): use the generic message.
 				}
@@ -485,15 +488,12 @@ export default function (pi: ExtensionAPI) {
 		refresh();
 	};
 
-	const scheduleEditorReconciliation = (ctx: ExtensionContext) => {
-		sessionLifecycle.defer(() => {
-			if (!isTuiContext(ctx) || !currentConfig.features.editor) return;
-			const currentFactory = ctx.ui.getEditorComponent();
-			if (currentFactory && currentFactory !== installedEditorFactory) {
-				applyConfiguredUi(ctx);
-				refresh();
-			}
-		});
+	const reconcileEditor = (ctx: ExtensionContext) => {
+		if (!sessionLifecycle.isCurrent() || !isTuiContext(ctx) || !currentConfig.features.editor) return;
+		if (ctx.ui.getEditorComponent() === installedEditorFactory) return;
+		// installEditor composes with the foreign factory, preserving its input and autocomplete.
+		installEditor(ctx);
+		refresh();
 	};
 
 	/** Idempotent: the lifecycle guard makes repeated shutdowns no-ops. */
@@ -542,7 +542,13 @@ export default function (pi: ExtensionAPI) {
 		invalidateSessionCaches();
 		lastProjectCwd = undefined;
 		installUi(ctx);
-		scheduleEditorReconciliation(ctx);
+		sessionLifecycle.defer(() => reconcileEditor(ctx));
+	});
+
+	// Pi awaits every session_start handler before discovering resources. Unlike a
+	// timed settle window, this also catches editors installed after slow startup work.
+	pi.on("resources_discover", (_event, ctx) => {
+		reconcileEditor(ctx);
 	});
 
 	registerZentuiSettingsCommand(pi, {
