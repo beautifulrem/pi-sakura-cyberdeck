@@ -2,7 +2,7 @@
 
 Lightweight Sakura Macaron visual pack for [Pi](https://pi.dev).
 
-**v1.4.0** — maintenance release: `edit` diffs get the sakura card (self-rendered tools are no longer skipped), the pack now uses Pi's native extension changelog (no custom “what’s new” notice), the theme schema reference is current, and the test suite runs on Node 26. See [what changed](#140).
+**v1.4.0** — maintenance release: tool cards now always show their state (`✓ BASH · COMPLETE`) and `+N −M` for `edit`, `edit` diffs get the sakura card, the pack uses Pi's native extension changelog (no custom “what’s new” notice), the theme schema reference is current, and the test suite runs on Node 26. See [what changed](#140).
 
 ## What’s inside
 
@@ -46,13 +46,15 @@ No runtime dependencies; everything uses Pi’s public extension API except thre
 **History**
 
 ```text
-╭─ ✓ READ ─────────────────────────╮
+╭─ ✓ READ · COMPLETE ──────────────╮
 ┃  read src/app.ts                 │
 ┃  …Pi’s own output, unchanged…    │
 ╰──────────────────────────────────╯
 ```
 
 - Tool cards: sakura frame + status rail (sky running / mint done / coral failed); the body is Pi’s own render, byte-for-byte
+- Status label always carries the state: `◆ READ · RUNNING`, `✓ READ · COMPLETE`, `× READ · FAILED`
+- Diff results (`edit`) add their `+N −M` line counts from Pi's own result diff (`details.diff`); other tools never show a count
 - `edit` diffs are framed like any other tool card; `!cmd` output and images stay stock Pi
 - Hidden thinking shows a sakura `✦ Thought` label; visible thinking is compressed into a `✦ Thought trail` digest (`/zentui thinking-trail off` shows Pi's stock rendering)
 
@@ -184,6 +186,9 @@ Maintenance release built against Pi 1.5.2.
 
 #### Changed
 
+- Tool card status labels always carry the state, plus `+N −M` when the tool's result has a unified
+  diff (`details.diff`, as `edit` does): `◆ BASH · RUNNING`, `✓ BASH · COMPLETE`, `× BASH · FAILED`,
+  `✓ EDIT · +3 −2 · COMPLETE`.
 - `edit` (and any other `renderShell: "self"` tool) is now framed like every other tool card; only
   image results and hidden cards stay stock. Previously the pack skipped self-rendered tools, so
   `edit` diffs had no card at all.
