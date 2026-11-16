@@ -2,7 +2,7 @@
 
 Lightweight Sakura Macaron visual pack for [Pi](https://pi.dev).
 
-**v1.4.0** — maintenance release: tool cards now always show their state (`✓ BASH · COMPLETE`) and `+N −M` for `edit`, `edit` diffs get the sakura card, the pack uses Pi's native extension changelog (no custom “what’s new” notice), the theme schema reference is current, and the test suite runs on Node 26. See [what changed](#140).
+**v1.5.0** — robust thought trails, `❯` shell headers with syntax colors and expandable long commands, theme-aware status colors, and editor-extension compatibility fixes. Uses Pi's native extension changelog and runs tests on Node 26. See [what changed](#150).
 
 ## What’s inside
 
@@ -13,9 +13,11 @@ Lightweight Sakura Macaron visual pack for [Pi](https://pi.dev).
 | **Zentui** | Editor rails, Starship-style footer, sakura tool/message frames |
 | **Claude shimmer** | Working line with macaron sweep, effort + token HUD |
 | **Matrix** | Pastel digital-rain widget while working — **off by default**, `/sakura-matrix on` |
-| **Changelog** | `/sakura-changelog` viewer (updates appear in Pi's own “Extension Updates” notice) |
+| **Changelog** | `/sakura-changelog` viewer (Pi >= 1.5.0 shows updates in its own “Extension Updates” notice) |
 
 No runtime dependencies; everything uses Pi’s public extension API except three small, guarded render patches (user messages, tool card frames, selector borders).
+
+Other editor extensions (e.g. `pi-fff`) keep their input and autocomplete inside Zentui’s frame, even when loaded after this pack.
 
 ## Look (v1.3)
 
@@ -52,9 +54,12 @@ No runtime dependencies; everything uses Pi’s public extension API except thre
 ╰──────────────────────────────────╯
 ```
 
-- Tool cards: sakura frame + status rail (sky running / mint done / coral failed); the body is Pi’s own render, byte-for-byte
+- Tool cards: sakura frame + semantic status label/rail (`toolTitle` running / `success` done / `error` failed); result output stays Pi’s own render, byte-for-byte
 - Status label always carries the state: `◆ READ · RUNNING`, `✓ READ · COMPLETE`, `× READ · FAILED`
 - Diff results (`edit`) add their `+N −M` line counts from Pi's own result diff (`details.diff`); other tools never show a count
+- Bash headers use `❯`, not `$`: `❯ cd pi-sakura-cyberdeck && npm run typecheck && npm test (timeout 120s)`
+- Shell headers use Pi's native syntax grammar and active `syntax*` theme colors (keywords/builtins, strings, variables, comments). Long commands wrap with a hanging indent; collapsed cards show five command rows with the configured expand-key hint. Expand for the full command, including multiline scripts. PowerShell keeps its `PS>` prompt and grammar. Requires the public `registerToolRenderer` API; older hosts keep native headers.
+- Warning/error notices, including output-truncation warnings, retain Pi's semantic theme colors. A log containing the word `Error` does **not** turn a successful tool into `FAILED`; only Pi's result status does. Arbitrary output/ANSI colors are not guessed or recolored.
 - `edit` diffs are framed like any other tool card; `!cmd` output and images stay stock Pi
 - Hidden thinking shows a sakura `✦ Thought` label; visible thinking is compressed into a `✦ Thought trail` digest (`/zentui thinking-trail off` shows Pi's stock rendering)
 
@@ -69,7 +74,7 @@ No runtime dependencies; everything uses Pi’s public extension API except thre
 ```
 
 - One step per thinking paragraph, first line only; rails/`◇` in the sakura gradient, body in the thinking tint
-- Wrapped rows keep their `│` rail (the tree never breaks at a soft wrap); long trails cap at 16 rows, then `╰─ … +N more`
+- Wrapped rows keep their `│` rail, including long inline code, URLs, backticks and math; each digest row is literal text rather than reparsed Markdown. Long trails cap at 16 rows, then `╰─ … +N more`. Very narrow widths fall back to Pi's normal thinking render.
 - Display-only via Pi's public markdown transformer; the session and model context keep the full thinking text
 
 ## Requirements
@@ -103,7 +108,7 @@ For an unpinned Git installation:
 pi update git:github.com/beautifulrem/pi-sakura-cyberdeck
 ```
 
-Restart Pi after updating. Pi shows what changed under **Extension Updates** on the next fresh launch (its own package-changelog notice, condensed when `collapseChangelog` is set); run `/sakura-changelog` any time to read the full changelog inside Pi, or see [CHANGELOG.md](CHANGELOG.md).
+Restart Pi after updating. Pi **>= 1.5.0** shows what changed under **Extension Updates** on the next fresh launch (its own package-changelog notice, condensed when `collapseChangelog` is set). On older Pi versions, use `/sakura-changelog`; the command always opens the full changelog inside Pi. See also [CHANGELOG.md](CHANGELOG.md).
 
 Pi does not push package updates automatically. Users who pinned a tag or commit must explicitly select the new version:
 
@@ -180,11 +185,24 @@ Avoid stacking with `pi-zentui`, `pi-powerline-footer`, stock `pi-claude-shimmer
 
 Full history: [CHANGELOG.md](CHANGELOG.md) (also available in Pi via `/sakura-changelog`).
 
-### 1.4.0
+### 1.5.0
 
-Maintenance release built against Pi 1.5.2.
+Rendering robustness release built against Pi 1.5.2.
+
+#### Added
+
+- Shell call headers use `❯` (PowerShell keeps `PS>`), Pi's native shell grammar and the active
+  theme's `syntax*` colors. Long commands wrap with a hanging indent, show five visual rows while
+  collapsed, and expand to the full command with the configured expand keybinding.
+- Thought-trail rows are transported as literal, sanitized display text, so long inline code, URLs,
+  backticks and math keep their `│` rail; tests assert against Pi's real Markdown renderer.
+- Editor wrappers forward fullscreen autocomplete paging and mapped mouse coordinates, including
+  drag/release that leaves the frame.
 
 #### Changed
+
+- Tool status labels and rails follow the active theme's semantic colors (`toolTitle`, `success`,
+  `error`); log wording never decides `FAILED`.
 
 - Tool card status labels always carry the state, plus `+N −M` when the tool's result has a unified
   diff (`details.diff`, as `edit` does): `◆ BASH · RUNNING`, `✓ BASH · COMPLETE`, `× BASH · FAILED`,
@@ -202,8 +220,17 @@ Maintenance release built against Pi 1.5.2.
 
 #### Fixed
 
+- Borderless custom editors losing their first and last rows; literal horizontal rules are never
+  mistaken for frame borders.
+- `NO_COLOR` leaking pack colors from chrome and shell expansion hints; user-message color-source
+  changes now repaint cached cards.
+- Unified-diff lines starting with `+++` / `---` inside hunks counted as file headers.
+- Theme validation now uses the installed Pi 1.5.2 schema path (with the legacy fallback) instead of
+  silently skipping; removed the optional `appearance` key Pi 0.87.1 rejects.
+- Legacy migration notice no longer tells users to enable fullscreen when Pi already defaults to it.
 - Theme `$schema` still pointed at the pre-1.2.0 raw GitHub path; it now uses
-  `https://pi.dev/schemas/theme.schema.json`, and the theme declares `"appearance": "dark"`.
+  `https://pi.dev/schemas/theme.schema.json`. Dark appearance is inferred; omitting the optional
+  `appearance` field preserves Pi 0.87.1 schema compatibility.
 - `npm test` no longer passes the removed `--experimental-transform-types` flag; constructor parameter
   properties are gone, so the suite runs on native type stripping (Node >= 22.18, now an `engines` entry).
 
