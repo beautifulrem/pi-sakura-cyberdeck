@@ -3,6 +3,41 @@
 All notable changes to pi-sakura-cyberdeck. After updating, Pi shows the newest
 entry once above the editor; run `/sakura-changelog` to read this file inside Pi.
 
+## [1.4.0] - 2026-11-17
+
+Maintenance release built against Pi 1.5.2: it leans on Pi's native extension changelogs, fixes the
+theme schema reference, and makes the test suite run on current Node without TypeScript transform
+flags.
+
+### Highlights
+
+- **The changelog comes from Pi**: the pack no longer keeps its own “what’s new” notice or state file;
+  Pi shows package changelog entries under “Extension Updates”. `/sakura-changelog` stays for reading
+  the full file inside Pi.
+- **Theme schema fixed**: `$schema` points at `https://pi.dev/schemas/theme.schema.json` (Pi 1.2.0
+  moved it), and the theme declares `"appearance": "dark"`.
+- **`npm test` works on Node 26**: constructor parameter properties are gone, so the suite runs on
+  native type stripping (Node >= 22.18); `scripts/check.mjs` guards against reintroducing them.
+
+### Changed
+
+- Dropped the custom one-time “what’s new” notice and `sakura-cyberdeck-state.json` (Pi's own package
+  changelog already covers it, including `collapseChangelog`); `/sakura-changelog` still opens the
+  scrollable viewer.
+- The footer pulse pauses while a blocking extension dialog is open (`ui_prompt_start` / `ui_prompt_end`).
+- The legacy fixed-editor notice now acknowledges a user already on `"tuiMode": "fullscreen"`.
+- Documented why the tool-card frame keeps its `ToolExecutionComponent` hook instead of
+  `pi.registerToolRenderer()` (that API draws inside the row, not the frame around it).
+
+### Fixed
+
+- Theme `$schema` still pointed at the pre-1.2.0 raw GitHub path.
+- `npm test` passed the removed `--experimental-transform-types` flag.
+
+### Developer
+
+- `engines.node >= 22.18`; README notes Pi's `PI_TUI_WRITE_LOG` ANSI capture for TUI debugging.
+
 ## [1.3.0] - 2026-11-17
 
 A focused visual release: a compact thinking view and sakura-tinted code blocks.

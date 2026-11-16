@@ -10,6 +10,12 @@ import { installPrototypePatch } from "./prototype-patch-registry";
  * Body lines are Pi's render output at `width - 3` columns, passed through byte-for-byte: the
  * pack never rewrites, strips or truncates tool output. Tools that draw their own shell
  * (`renderShell: "self"`, e.g. edit), image results, and hidden cards stay fully stock.
+ *
+ * Why a component hook instead of `pi.registerToolRenderer()`: that API selects a tool's own
+ * `renderShell`/`renderCall`/`renderResult`, which draws the *inside* of the tool row. This card
+ * frames the whole rendered row (Pi's box, title and status) and remaps mouse hit-testing to it,
+ * so it has to hook `ToolExecutionComponent` itself. The hook is registered through
+ * `installPrototypePatch` (idempotent, removable, shielded from other Zentui forks).
  */
 
 type Cleanup = () => void;

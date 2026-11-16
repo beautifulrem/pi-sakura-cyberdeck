@@ -52,7 +52,7 @@ import { applyProjectRefreshToState } from "./project-state";
 import { readRuntimeInfo } from "./runtime";
 import { installSelectorBorderStyle } from "./selector-border";
 import { SessionLifecycle } from "./session-lifecycle";
-import { FIXED_EDITOR_REMOVED_MESSAGE, registerZentuiSettingsCommand } from "./settings-command";
+import { fixedEditorRemovedMessage, registerZentuiSettingsCommand } from "./settings-command";
 import { createInitialState, type FooterState, syncState } from "./state";
 import { applyThinkingLabel } from "./thinking-message";
 import { registerThinkingTrail } from "./thinking-trail";
@@ -128,6 +128,8 @@ export default function (pi: ExtensionAPI) {
 	let clockTimer: ReturnType<typeof setTimeout> | undefined;
 	let lastProjectCwd: string | undefined;
 	let agentWorking = false;
+	/** A blocking extension dialog is open; the footer pulse pauses while Pi waits for input. */
+	let uiPromptActive = false;
 	let lastConfigProblem: string | undefined;
 	let fixedEditorNoticeShown = false;
 
@@ -372,7 +374,7 @@ export default function (pi: ExtensionAPI) {
 				getActiveExtensionStatuses = fn ?? (() => new Map());
 			},
 			getLiveContext: () => liveContext.get(),
-			isAgentWorking: () => agentWorking,
+			isAgentWorking: () => agentWorking && !uiPromptActive,
 			setAnimationSync: (fn) => {
 				syncFooterAnimation = fn;
 			},
@@ -455,7 +457,15 @@ export default function (pi: ExtensionAPI) {
 			} catch {
 				// Read-only config: the notice still shows only once per process.
 			}
-			if (loaded.legacyFixedEditorEnabled) ctx.ui.notify(FIXED_EDITOR_REMOVED_MESSAGE, "info");
+			if (loaded.legacyFixedEditorEnabled) {
+				let tuiMode: string | undefined;
+				try {
+					tuiMode = pi.getSettings()?.tuiMode;
+				} catch {
+					// Older hosts without getSettings(): use the generic message.
+				}
+				ctx.ui.notify(fixedEditorRemovedMessage(tuiMode), "info");
+			}
 		}
 	};
 
@@ -491,6 +501,7 @@ export default function (pi: ExtensionAPI) {
 		if (!ctx || !sessionLifecycle.isCurrent()) return;
 		sessionLifecycle.shutdown();
 		agentWorking = false;
+		uiPromptActive = false;
 		try {
 			stopClockTimer();
 			stopProjectRefresh();
@@ -526,6 +537,7 @@ export default function (pi: ExtensionAPI) {
 		sessionLifecycle.start();
 		liveContext.clear();
 		agentWorking = false;
+		uiPromptActive = false;
 		state.sessionStartEpoch = Date.now();
 		invalidateSessionCaches();
 		lastProjectCwd = undefined;
@@ -614,6 +626,14 @@ export default function (pi: ExtensionAPI) {
 		agentWorking = false;
 		syncFooterAnimation?.();
 		syncInteractiveAndProjectState(event, ctx);
+	});
+	pi.on("ui_prompt_start", () => {
+		uiPromptActive = true;
+		syncFooterAnimation?.();
+	});
+	pi.on("ui_prompt_end", () => {
+		uiPromptActive = false;
+		syncFooterAnimation?.();
 	});
 	pi.on("model_select", (event, ctx) => {
 		liveContext.clear();

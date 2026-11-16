@@ -22,6 +22,31 @@ for (const name of Object.keys(manifest.dependencies ?? {})) {
 assert.deepEqual(Object.keys(manifest.dependencies ?? {}), [], "the pack ships without runtime dependencies");
 assert.equal(manifest.devDependencies, undefined, "dev tooling lives in .dev/ (npm run dev:setup)");
 
+// The suite must run on Node with type stripping only (Node 26 removed
+// --experimental-transform-types), so no TS runtime-only syntax is allowed.
+assert.ok(
+	!manifest.scripts.test.includes("experimental-transform-types"),
+	"test script must not rely on the removed --experimental-transform-types flag",
+);
+function assertNoParameterProperties(file, source) {
+	for (const match of source.matchAll(/\bconstructor\s*\(/g)) {
+		let depth = 1;
+		let index = match.index + match[0].length;
+		const start = index;
+		while (index < source.length && depth > 0) {
+			const ch = source[index];
+			if (ch === "(") depth += 1;
+			else if (ch === ")") depth -= 1;
+			index += 1;
+		}
+		const params = source.slice(start, index - 1);
+		assert.ok(
+			!/^\s*(private|public|protected|readonly)\s/m.test(params),
+			`${file}: constructor parameter properties break Node type stripping`,
+		);
+	}
+}
+
 // Every declared resource exists; removed components stay removed.
 for (const path of [...manifest.pi.extensions, ...manifest.pi.themes]) assert.ok(await exists(path), `missing ${path}`);
 assert.equal(manifest.pi.extensions.some((path) => path.includes("dual-quota")), false);
@@ -40,10 +65,14 @@ async function listTs(dir) {
 }
 for (const file of await listTs("extensions")) {
 	const source = await read(file);
+	assertNoParameterProperties(file, source);
 	for (const [, spec] of source.matchAll(/from\s+"([^".][^"]*)"/g)) {
 		if (spec.startsWith("node:")) continue;
 		assert.ok(spec in (manifest.peerDependencies ?? {}), `${file} imports undeclared package ${spec}`);
 	}
+}
+for (const file of await listTs("test")) {
+	assertNoParameterProperties(file, await read(file));
 }
 
 // Shipped files: runtime resources + docs only.

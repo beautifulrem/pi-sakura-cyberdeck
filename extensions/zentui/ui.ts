@@ -405,13 +405,25 @@ export class PolishedEditor extends CustomEditor {
 }
 
 export class WrappedPolishedEditor implements EditorComponent {
+	private readonly base: WrappedEditor;
+	private readonly uiTheme: Theme;
+	private readonly getConfig: () => PolishedTuiConfig;
+	private readonly getModelMeta: () => EditorMeta;
+	private readonly getThinkingLevel: () => string | undefined;
+
 	constructor(
-		private readonly base: WrappedEditor,
-		private readonly uiTheme: Theme,
-		private readonly getConfig: () => PolishedTuiConfig,
-		private readonly getModelMeta: () => EditorMeta,
-		private readonly getThinkingLevel: () => string | undefined,
-	) {}
+		base: WrappedEditor,
+		uiTheme: Theme,
+		getConfig: () => PolishedTuiConfig,
+		getModelMeta: () => EditorMeta,
+		getThinkingLevel: () => string | undefined,
+	) {
+		this.base = base;
+		this.uiTheme = uiTheme;
+		this.getConfig = getConfig;
+		this.getModelMeta = getModelMeta;
+		this.getThinkingLevel = getThinkingLevel;
+	}
 
 	get focused(): boolean {
 		return Boolean(this.base.focused);

@@ -1,6 +1,7 @@
 {
-  "$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+  "$schema": "https://pi.dev/schemas/theme.schema.json",
   "name": "sakura-macaron",
+  "appearance": "dark",
   "vars": {
     "bg": "#14111A",
     "surface": "#1E1826",

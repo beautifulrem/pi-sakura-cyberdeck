@@ -2,7 +2,7 @@
 
 Lightweight Sakura Macaron visual pack for [Pi](https://pi.dev).
 
-**v1.3.0** — thought-trail release: visible thinking blocks collapse into a compact, sakura-gradient `✦ Thought trail` digest (on by default), and fenced code blocks pick up sakura fence and body colors. See [what changed](#130).
+**v1.4.0** — maintenance release: the pack now uses Pi's native extension changelog (no custom “what’s new” notice), the theme schema reference is current, and the test suite runs on Node 26. See [what changed](#140).
 
 ## What’s inside
 
@@ -13,7 +13,7 @@ Lightweight Sakura Macaron visual pack for [Pi](https://pi.dev).
 | **Zentui** | Editor rails, Starship-style footer, sakura tool/message frames |
 | **Claude shimmer** | Working line with macaron sweep, effort + token HUD |
 | **Matrix** | Pastel digital-rain widget while working — **off by default**, `/sakura-matrix on` |
-| **Changelog** | One-time “what’s new” notice after updates, `/sakura-changelog` viewer |
+| **Changelog** | `/sakura-changelog` viewer (updates appear in Pi's own “Extension Updates” notice) |
 
 No runtime dependencies; everything uses Pi’s public extension API except three small, guarded render patches (user messages, tool card frames, selector borders).
 
@@ -72,7 +72,7 @@ No runtime dependencies; everything uses Pi’s public extension API except thre
 
 ## Requirements
 
-- Pi **>= 0.87.1** (tested on 0.87.1 and 0.99.1)
+- Pi **>= 0.87.1** (tested on 0.87.1, 0.99.1 and 1.5.2)
 - Dark terminal background (the theme does not paint a background)
 - Truecolor recommended; 256-color terminals get the nearest palette colors, `NO_COLOR` disables the pack’s own colors
 - Nerd Font for the default icons (`icons.mode: "ascii"` works without)
@@ -101,7 +101,7 @@ For an unpinned Git installation:
 pi update git:github.com/beautifulrem/pi-sakura-cyberdeck
 ```
 
-Restart Pi after updating. The first session after an update shows **what’s new** above the editor (it disappears after your next message); run `/sakura-changelog` any time to read the full changelog inside Pi, or see [CHANGELOG.md](CHANGELOG.md).
+Restart Pi after updating. Pi shows what changed under **Extension Updates** on the next fresh launch (its own package-changelog notice, condensed when `collapseChangelog` is set); run `/sakura-changelog` any time to read the full changelog inside Pi, or see [CHANGELOG.md](CHANGELOG.md).
 
 Pi does not push package updates automatically. Users who pinned a tag or commit must explicitly select the new version:
 
@@ -177,6 +177,27 @@ Avoid stacking with `pi-zentui`, `pi-powerline-footer`, stock `pi-claude-shimmer
 ## Changelog
 
 Full history: [CHANGELOG.md](CHANGELOG.md) (also available in Pi via `/sakura-changelog`).
+
+### 1.4.0
+
+Maintenance release built against Pi 1.5.2.
+
+#### Changed
+
+- Dropped the custom one-time “what’s new” notice and `sakura-cyberdeck-state.json`: Pi's own package
+  changelog already shows new entries under “Extension Updates” (and honors `collapseChangelog`).
+  `/sakura-changelog` still opens the scrollable viewer.
+- The footer pulse pauses while a blocking extension dialog is open (`ui_prompt_start` / `ui_prompt_end`).
+- The legacy fixed-editor notice acknowledges a user already on `"tuiMode": "fullscreen"`.
+- Documented why the tool-card frame keeps its `ToolExecutionComponent` hook instead of
+  `pi.registerToolRenderer()`.
+
+#### Fixed
+
+- Theme `$schema` still pointed at the pre-1.2.0 raw GitHub path; it now uses
+  `https://pi.dev/schemas/theme.schema.json`, and the theme declares `"appearance": "dark"`.
+- `npm test` no longer passes the removed `--experimental-transform-types` flag; constructor parameter
+  properties are gone, so the suite runs on native type stripping (Node >= 22.18, now an `engines` entry).
 
 ### 1.3.0
 
@@ -308,7 +329,7 @@ Supported Pi versions: 0.87.1 and newer (tested on 0.87.1 and 0.99.1).
 
 #### Developer
 
-- Real unit tests (`npm test`, 100+ tests) and a strict type check (`npm run typecheck`) against Pi 0.99.1; the suite also passes against Pi 0.87.1 (`PI_HOST_ROOT=…`). Set up with `npm run dev:setup` (installs into `.dev/`, nothing is added to the package).
+- Real unit tests (`npm test`, 100+ tests) and a strict type check (`npm run typecheck`) against Pi 1.5.2; the suite also passes against Pi 0.99.1 and 0.87.1 (`PI_HOST_ROOT=…`). Set up with `npm run dev:setup` (installs into `.dev/`, nothing is added to the package). Needs Node **>= 22.18** (native type stripping, no TS transform flags).
 - `scripts/check.mjs` now validates the manifest, shipped files, peer dependencies, theme keys and changelog instead of regex-matching source code.
 - The published package no longer ships `scripts/`.
 
@@ -327,6 +348,8 @@ npm run dev:setup     # installs Pi + TypeScript into .dev/ (not shipped, no pac
 npm run verify        # package check + strict typecheck + unit tests
 PI_HOST_ROOT=/path/to/node_modules/@earendil-works/pi-coding-agent npm test   # test against another Pi
 ```
+
+Node **>= 22.18** is required (the suite runs on native type stripping). When debugging the TUI, Pi's `PI_TUI_WRITE_LOG` captures the raw ANSI stream.
 
 ## License
 
