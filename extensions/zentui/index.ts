@@ -55,6 +55,7 @@ import { SessionLifecycle } from "./session-lifecycle";
 import { FIXED_EDITOR_REMOVED_MESSAGE, registerZentuiSettingsCommand } from "./settings-command";
 import { createInitialState, type FooterState, syncState } from "./state";
 import { applyThinkingLabel } from "./thinking-message";
+import { registerThinkingTrail } from "./thinking-trail";
 import { installToolExecutionStyle } from "./tool-execution";
 import { PolishedEditor, WrappedPolishedEditor } from "./ui";
 import { installUserMessageStyle } from "./user-message";
@@ -136,6 +137,10 @@ export default function (pi: ExtensionAPI) {
 	const liveContext = new LiveContextController(sessionLifecycle, refresh);
 	const getActiveTheme = () => activeTheme;
 	const getCurrentConfig = () => currentConfig;
+
+	// Public, display-only markdown transformer (Pi >= 0.87.1): compress visible thinking
+	// blocks into a compact trail. Registered once; toggling the feature is read live.
+	registerThinkingTrail(pi, () => currentConfig.features.thinkingTrail);
 	const getThinkingLevel = () =>
 		sessionLifecycle.isCurrent() ? pi.getThinkingLevel() : ("off" as const);
 	const getProbePlan = (): ProjectProbePlan => {

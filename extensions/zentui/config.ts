@@ -62,6 +62,8 @@ export type UiFeaturesConfig = {
 	copyFriendly: boolean;
 	/** Zentui styling of transcript messages, tool blocks and selector borders. */
 	messageStyle: boolean;
+	/** Collapse visible thinking blocks into a compact "✦ Thought trail" digest. */
+	thinkingTrail: boolean;
 };
 
 export type AnimationsConfig = {
@@ -240,6 +242,7 @@ const DEFAULT_FEATURES: UiFeaturesConfig = {
 	statusLine: true,
 	copyFriendly: false,
 	messageStyle: true,
+	thinkingTrail: true,
 };
 
 const DEFAULT_ANIMATIONS: AnimationsConfig = {
@@ -469,6 +472,10 @@ function normalizeUiFeatures(record: Record<string, unknown>): UiFeaturesConfig 
 		// Absent in ≤1.1.6 configs, where message styling was tied to the editor switch.
 		messageStyle:
 			typeof record.messageStyle === "boolean" ? record.messageStyle : booleanValue(record, "editor"),
+		thinkingTrail:
+			typeof record.thinkingTrail === "boolean"
+				? record.thinkingTrail
+				: DEFAULT_FEATURES.thinkingTrail,
 	};
 }
 
