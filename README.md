@@ -2,7 +2,7 @@
 
 Lightweight Sakura Macaron visual pack for [Pi](https://pi.dev).
 
-**v1.4.0** — maintenance release: the pack now uses Pi's native extension changelog (no custom “what’s new” notice), the theme schema reference is current, and the test suite runs on Node 26. See [what changed](#140).
+**v1.4.0** — maintenance release: `edit` diffs get the sakura card (self-rendered tools are no longer skipped), the pack now uses Pi's native extension changelog (no custom “what’s new” notice), the theme schema reference is current, and the test suite runs on Node 26. See [what changed](#140).
 
 ## What’s inside
 
@@ -53,7 +53,7 @@ No runtime dependencies; everything uses Pi’s public extension API except thre
 ```
 
 - Tool cards: sakura frame + status rail (sky running / mint done / coral failed); the body is Pi’s own render, byte-for-byte
-- `!cmd` output, edit diffs and images: stock Pi
+- `edit` diffs are framed like any other tool card; `!cmd` output and images stay stock Pi
 - Hidden thinking shows a sakura `✦ Thought` label; visible thinking is compressed into a `✦ Thought trail` digest (`/zentui thinking-trail off` shows Pi's stock rendering)
 
 **Thought trail**
@@ -184,6 +184,9 @@ Maintenance release built against Pi 1.5.2.
 
 #### Changed
 
+- `edit` (and any other `renderShell: "self"` tool) is now framed like every other tool card; only
+  image results and hidden cards stay stock. Previously the pack skipped self-rendered tools, so
+  `edit` diffs had no card at all.
 - Dropped the custom one-time “what’s new” notice and `sakura-cyberdeck-state.json`: Pi's own package
   changelog already shows new entries under “Extension Updates” (and honors `collapseChangelog`).
   `/sakura-changelog` still opens the scrollable viewer.
