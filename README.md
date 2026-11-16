@@ -2,7 +2,7 @@
 
 Lightweight Sakura Macaron visual pack for [Pi](https://pi.dev).
 
-**v1.2.0** — robustness, performance and footprint release: no idle redraws, no rewriting of tool or command output, safer git, fixed-editor removed, matrix opt-in, 256-color/`NO_COLOR` support, and an in-app changelog. See [what changed](#120).
+**v1.3.0** — thought-trail release: visible thinking blocks collapse into a compact, sakura-gradient `✦ Thought trail` digest (on by default), and fenced code blocks pick up sakura fence and body colors. See [what changed](#130).
 
 ## What’s inside
 
@@ -17,7 +17,7 @@ Lightweight Sakura Macaron visual pack for [Pi](https://pi.dev).
 
 No runtime dependencies; everything uses Pi’s public extension API except three small, guarded render patches (user messages, tool card frames, selector borders).
 
-## Look (v1.2)
+## Look (v1.3)
 
 **Footer**
 
@@ -54,7 +54,21 @@ No runtime dependencies; everything uses Pi’s public extension API except thre
 
 - Tool cards: sakura frame + status rail (sky running / mint done / coral failed); the body is Pi’s own render, byte-for-byte
 - `!cmd` output, edit diffs and images: stock Pi
-- Hidden thinking shows a sakura `✦ Thought` label; visible thinking is stock Pi
+- Hidden thinking shows a sakura `✦ Thought` label; visible thinking is compressed into a `✦ Thought trail` digest (`/zentui thinking-trail off` shows Pi's stock rendering)
+
+**Thought trail**
+
+```text
+✦ Thought trail · 3 steps
+ ├─ ◇ First step here.
+ ├─ ◇ Second step that is quite long
+ │    and should wrap nicely.
+ ╰─ ◇ Third final step.
+```
+
+- One step per thinking paragraph, first line only; rails/`◇` in the sakura gradient, body in the thinking tint
+- Wrapped rows keep their `│` rail (the tree never breaks at a soft wrap); long trails cap at 16 rows, then `╰─ … +N more`
+- Display-only via Pi's public markdown transformer; the session and model context keep the full thinking text
 
 ## Requirements
 
@@ -129,7 +143,8 @@ Zentui config file: `~/.pi/agent/sakura-cyberdeck-zentui.json` (edit with `/zent
     "editorBorder": "sakura-macaron-gradient"
   },
   "features": {
-    "messageStyle": true      // sakura frames for messages and tool cards
+    "messageStyle": true,     // sakura frames for messages and tool cards
+    "thinkingTrail": true     // compress visible thinking into a "✦ Thought trail" digest
   },
   "animations": {
     "footerPulse": false      // animate footer gradients while the agent works
@@ -143,7 +158,7 @@ Matrix settings live in `~/.pi/agent/sakura-cyberdeck-matrix.json` (edit with `/
 
 ```text
 /zentui                                   settings UI (editor, footer, messages, icons, colors…)
-/zentui editor|statusline|messages|copy-friendly|pulse on|off|toggle
+/zentui editor|statusline|messages|copy-friendly|thinking-trail|pulse on|off|toggle
 /zentui format "<template>"               custom footer format ("" = segment layout)
 
 /sakura-matrix [status]                   current rain settings
@@ -162,6 +177,20 @@ Avoid stacking with `pi-zentui`, `pi-powerline-footer`, stock `pi-claude-shimmer
 ## Changelog
 
 Full history: [CHANGELOG.md](CHANGELOG.md) (also available in Pi via `/sakura-changelog`).
+
+### 1.3.0
+
+A focused visual release: a compact thinking view and sakura code blocks.
+
+#### Added
+
+- **Thought trail**: visible thinking blocks are compressed into a compact `✦ Thought trail · N steps`
+  digest with sakura-gradient rails (`├─ ◇` / `╰─ ◇` per paragraph, wrapped rows keep their `│` rail)
+  via Pi's public markdown transformer — display-only, no prototype patches, the session and model
+  context keep the full thinking text. On by default; toggle with `/zentui thinking-trail on|off`
+  (setting `features.thinkingTrail`).
+- Fenced code blocks read as sakura: the ``` fences use the accent pink (`mdCodeBlockBorder`)
+  and body text the soft lilac (`mdCodeBlock`). Pi's own `markdown.codeBlockIndent` still sets the indent.
 
 ### 1.2.0
 

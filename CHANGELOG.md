@@ -3,6 +3,25 @@
 All notable changes to pi-sakura-cyberdeck. After updating, Pi shows the newest
 entry once above the editor; run `/sakura-changelog` to read this file inside Pi.
 
+## [1.3.0] - 2026-11-17
+
+A focused visual release: a compact thinking view and sakura-tinted code blocks.
+
+### Highlights
+
+- **Thought trail** — visible thinking blocks collapse into a compact, sakura-gradient `✦ Thought trail` digest.
+- **Sakura code blocks** — ``` fences use the accent pink, code text the soft lilac.
+
+### Added
+
+- **Thought trail**: visible thinking blocks are compressed into a compact `✦ Thought trail · N steps`
+  digest with sakura-gradient rails (`├─ ◇` / `╰─ ◇` per paragraph, wrapped rows keep their `│` rail)
+  via Pi's public markdown transformer — display-only, no prototype patches, the session and model
+  context keep the full thinking text. On by default; toggle with `/zentui thinking-trail on|off`
+  (setting `features.thinkingTrail`).
+- Fenced code blocks read as sakura: the ``` fences use the accent pink (`mdCodeBlockBorder`)
+  and body text the soft lilac (`mdCodeBlock`). Pi's own `markdown.codeBlockIndent` still sets the indent.
+
 ## [1.2.0] - 2026-09-30
 
 A robustness, performance and "lighter footprint" release based on a full code review

@@ -91,7 +91,7 @@ export function gradientCacheSize(): number {
 	return gradientCache.size;
 }
 
-function paintPositions(text: string, colorAt: (position: number) => RGB): string {
+function paintPositions(text: string, colorAt: (position: number) => RGB, reset = true): string {
 	if (getColorMode() === "none") return text;
 	const chars = splitGraphemes(text);
 	if (chars.length === 0) return text;
@@ -101,7 +101,16 @@ function paintPositions(text: string, colorAt: (position: number) => RGB): strin
 		const char = chars[index] ?? "";
 		rendered += char === " " ? char : `${fgAnsi(colorAt(index / span))}${char}`;
 	}
-	return `${rendered}${RESET}`;
+	return reset ? `${rendered}${RESET}` : rendered;
+}
+
+/**
+ * Same gradient without the trailing reset, so a caller can keep styling the rest of
+ * the line (e.g. a colored rail followed by body text).
+ */
+export function renderSakuraGradientOpen(text: string): string {
+	if (!text) return text;
+	return paintPositions(text, (pos) => sampleSakuraGradient(pos), false);
 }
 
 /** Render Sakura → sky gradient. Optional phase shifts the stops for shimmer. */
