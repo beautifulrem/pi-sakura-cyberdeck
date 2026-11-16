@@ -140,10 +140,18 @@ test("settled tool card is cached (same array while nothing changed)", () => {
 	assert.match(strip(failed[1]!), /FAILED/);
 });
 
-test("self-rendered tools stay stock", () => {
+test("self-rendered tools (e.g. edit) are framed too", () => {
 	const tool = makeTool({ renderShell: "self" });
 	finish(tool, false);
-	assert.deepEqual(tool.render(60), stockToolRender.call(tool, 60));
+	const width = 60;
+	const inner = stockToolRender.call(tool, width - 3);
+	const out = tool.render(width);
+	assert.equal(out.length, inner.length + 2, "title row and bottom row are added");
+	assert.match(strip(out[1]!), /^╭─ ✓ READ FILE ─+╮$/);
+	assert.match(strip(out.at(-1)!), /^╰─+╯$/);
+	for (let i = 1; i < inner.length; i++) {
+		assert.equal(strip(out[i + 1]!), `┃ ${strip(inner[i]!)}│`, `body line ${i} wrapped, not rewritten`);
+	}
 });
 
 test("tool and user cards never exceed the requested width (CJK/emoji)", () => {

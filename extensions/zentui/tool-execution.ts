@@ -8,8 +8,9 @@ import { installPrototypePatch } from "./prototype-patch-registry";
  * Tool card chrome: sakura gradient title frame + status rail around Pi's own tool rendering.
  *
  * Body lines are Pi's render output at `width - 3` columns, passed through byte-for-byte: the
- * pack never rewrites, strips or truncates tool output. Tools that draw their own shell
- * (`renderShell: "self"`, e.g. edit), image results, and hidden cards stay fully stock.
+ * pack never rewrites, strips or truncates tool output. Hidden cards and image results stay stock
+ * (a frame around an image row would be meaningless); `renderShell: "self"` tools such as `edit`
+ * are framed like any other.
  *
  * Why a component hook instead of `pi.registerToolRenderer()`: that API selects a tool's own
  * `renderShell`/`renderCall`/`renderResult`, which draws the *inside* of the tool row. This card
@@ -28,7 +29,6 @@ type ToolExecutionRuntime = {
 	toolName?: unknown;
 	expanded?: unknown;
 	hideComponent?: unknown;
-	getRenderShell?: unknown;
 };
 
 type MouseEventLike = { x: number; y: number; width: number; height: number };
@@ -77,16 +77,15 @@ function hasImageResult(runtime: ToolExecutionRuntime): boolean {
 	return content.some((item) => (item as { type?: unknown } | null)?.type === "image");
 }
 
-/** Stock rendering for shells we do not frame (self-rendered tools, images, hidden cards). */
+/**
+ * Stock rendering only where a frame cannot work: hidden cards and image results.
+ *
+ * `renderShell: "self"` tools (e.g. `edit`, which renders its own diff) are framed too — Pi's
+ * self-shell render is `["", ...content]`, which the card's `prefix` handling already accounts
+ * for, and the card draws rails rather than a second box.
+ */
 function isFrameable(runtime: ToolExecutionRuntime): boolean {
 	if (runtime.hideComponent === true) return false;
-	if (typeof runtime.getRenderShell === "function") {
-		try {
-			if ((runtime.getRenderShell as () => unknown).call(runtime) === "self") return false;
-		} catch {
-			return false;
-		}
-	}
 	return !hasImageResult(runtime);
 }
 

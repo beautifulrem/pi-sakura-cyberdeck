@@ -16,11 +16,16 @@ flags.
   the full file inside Pi.
 - **Theme schema fixed**: `$schema` points at `https://pi.dev/schemas/theme.schema.json` (Pi 1.2.0
   moved it), and the theme declares `"appearance": "dark"`.
+- **`edit` cards are framed again**: `renderShell: "self"` tools (`edit` in Pi 1.5) are no longer
+  skipped, so edit diffs get the same sakura card as every other tool.
 - **`npm test` works on Node 26**: constructor parameter properties are gone, so the suite runs on
   native type stripping (Node >= 22.18); `scripts/check.mjs` guards against reintroducing them.
 
 ### Changed
 
+- `edit` (and any other `renderShell: "self"` tool) is framed like every other tool card; only image
+  results and hidden cards stay stock. Previously the pack skipped self-rendered tools, so `edit`
+  diffs had no card at all.
 - Dropped the custom one-time “what’s new” notice and `sakura-cyberdeck-state.json` (Pi's own package
   changelog already covers it, including `collapseChangelog`); `/sakura-changelog` still opens the
   scrollable viewer.
