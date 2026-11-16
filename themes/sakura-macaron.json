@@ -1,7 +1,6 @@
 {
   "$schema": "https://pi.dev/schemas/theme.schema.json",
   "name": "sakura-macaron",
-  "appearance": "dark",
   "vars": {
     "bg": "#14111A",
     "surface": "#1E1826",

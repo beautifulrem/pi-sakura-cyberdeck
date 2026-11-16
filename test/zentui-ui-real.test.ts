@@ -33,4 +33,10 @@ test("PolishedEditor frames Pi's real Editor without reading private fields", ()
 	assert.ok(lines.some((line) => line.includes("────────") && line.includes(defaultConfig.icons.rail)), "typed dashes stay content");
 	assert.ok(lines.some((line) => /gpt-5\s+OpenAI\s+high/.test(line)));
 	assert.equal(lines.length, 7, lines.join("\n"));
+	if (typeof Object.getPrototypeOf(PolishedEditor.prototype).handleMouse === "function") {
+		editor.setText("abcdefghij\nKLMNOPQRST");
+		editor.render(50);
+		editor.handleMouse({ type: "click", button: "left", x: 4, y: 2, width: 50, height: 7 } as never);
+		assert.deepEqual(editor.getCursor(), { line: 0, col: 2 }, "visible body clicks map through the rail and spacer");
+	}
 });

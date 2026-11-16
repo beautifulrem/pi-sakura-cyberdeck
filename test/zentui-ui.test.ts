@@ -75,6 +75,65 @@ test("a nested Zentui frame from a wrapped base loses only its tagged meta line"
 	assert.ok(lines.some((line) => line.includes("hello OpenAI gpt-5")));
 });
 
+test("borderless editors retain every visible row", () => {
+	const base = { ...fakeBase([]), render: () => ["first user line", "middle user line", "last user line"] };
+	const lines = renderPlain(base);
+	for (const row of ["first user line", "middle user line", "last user line"]) {
+		assert.ok(lines.some((line) => line.includes(row)), row);
+	}
+	const rules = renderPlain({ ...fakeBase([]), render: () => ["────", "body", "────"] });
+	assert.equal(rules.filter((line) => line.trimEnd().endsWith("────") && line.trimEnd().length < 20).length, 2,
+		"literal horizontal rules are content, not proven borders");
+});
+
+test("wrapped editors forward mouse geometry and live viewport capture", () => {
+	for (const copyFriendly of [false, true]) {
+		const config = mergeConfig({ features: { copyFriendly } });
+		const received: unknown[] = [];
+		const base = {
+			...fakeBase(["first", "second"], ["completion"]),
+			capturesViewportInput: true,
+			handleMouse(event: unknown) { received.push(event); return { handled: true }; },
+		};
+		const editor = new WrappedPolishedEditor(base as never, theme, () => config,
+			() => ({ modelLabel: "gpt-5", providerLabel: "OpenAI" }), () => "off");
+		const lines = editor.render(60).map(stripVTControlCharacters);
+		const event = { type: "click", button: "left", x: 4, y: 2, width: 60, height: lines.length,
+			screenX: 4, screenY: 2, shift: false, alt: false, ctrl: false } as const;
+		const body = lines.findIndex((line) => line.includes("first"));
+		const offset = lines[body]!.indexOf("first");
+		editor.handleMouse({ ...event, y: body });
+		assert.deepEqual(received.pop(), { ...event, x: 4 - offset, y: 1, width: 60 - offset, height: 5 });
+		editor.handleMouse({ ...event, x: 3, y: lines.length - 1 });
+		assert.deepEqual(received.pop(), { ...event, x: 3, y: 4, width: 60 - offset, height: 5 });
+		editor.handleMouse({ ...event, y: 0 });
+		assert.equal(received.length, 0, "chrome never moves the cursor");
+		assert.equal(editor.capturesViewportInput, true);
+		base.capturesViewportInput = false;
+		assert.equal(editor.capturesViewportInput, false);
+	}
+});
+
+test("wrapped editors retain captured drag/release targets outside the frame", () => {
+	const received: unknown[] = [];
+	const base = {
+		...fakeBase(["body"]),
+		handleMouse(event: unknown) { received.push(event); return { capture: true }; },
+	};
+	const editor = new WrappedPolishedEditor(base as never, theme, () => defaultConfig,
+		() => ({ modelLabel: "m", providerLabel: "P" }), () => "off");
+	const lines = editor.render(60);
+	const press = { type: "press", button: "left", x: 4, y: 2, width: 60, height: lines.length,
+		screenX: 14, screenY: 12, shift: false, alt: false, ctrl: false } as const;
+	const result = editor.handleMouse(press);
+	assert.equal(result?.capture, true);
+	editor.handleMouse({ ...press, type: "release", y: 0, screenY: 10 });
+	assert.equal(received.length, 2, "release on top border still reaches the capturing base");
+	assert.deepEqual(received[1], { ...press, type: "release", x: 2, y: -1, screenY: 10, width: 58, height: 3 });
+	editor.handleMouse({ ...press, type: "click", y: 0 });
+	assert.equal(received.length, 2, "release ends capture, chrome clicks are inert again");
+});
+
 test("thinking level max renders with its own color", () => {
 	const config = mergeConfig({ colors: { editorThinkingMax: "#010203" } });
 	const editor = new WrappedPolishedEditor(
