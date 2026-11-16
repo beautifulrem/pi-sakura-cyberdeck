@@ -2,3 +2,4 @@ node_modules/
 *.tgz
 .DS_Store
 .dev/
+.pi-subagents/

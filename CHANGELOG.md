@@ -1,30 +1,46 @@
 # Changelog
 
-All notable changes to pi-sakura-cyberdeck. After updating, Pi shows the newest
-entry once above the editor; run `/sakura-changelog` to read this file inside Pi.
+All notable changes to pi-sakura-cyberdeck. Pi >= 1.5.0 shows new package entries
+once after updating; run `/sakura-changelog` on any supported Pi to read this file.
 
-## [1.4.0] - 2026-11-17
+## [1.5.0] - 2026-11-18
 
-Maintenance release built against Pi 1.5.2: it leans on Pi's native extension changelogs, fixes the
-theme schema reference, and makes the test suite run on current Node without TypeScript transform
-flags.
+Rendering robustness release built against Pi 1.5.2: shell command headers get a `❯` prompt, theme
+syntax colors and an expandable long-command preview, while thought trails stop breaking at inline
+code and editor extensions keep working inside the frame.
 
 ### Highlights
 
+- **Shell headers**: `❯ cd pi-sakura-cyberdeck && npm run typecheck && npm test (timeout 120s)`, with
+  the active theme's syntax colors and a five-row collapsed preview that expands to the full command.
+- **Thought trails stay intact**: long inline code, URLs, backticks and math no longer strand the tree
+  on the right edge; digest rows are literal, sanitized text.
+- **Theme-aware status**: running/done/failed use the theme's semantic colors, and log wording never
+  turns a successful tool into `FAILED`.
+- **Editor-extension safety**: borderless editors keep every row, clicks map through the frame, and
+  fullscreen autocomplete paging and drag-capture survive wrapping.
 - **The changelog comes from Pi**: the pack no longer keeps its own “what’s new” notice or state file;
   Pi shows package changelog entries under “Extension Updates”. `/sakura-changelog` stays for reading
   the full file inside Pi.
 - **Theme schema fixed**: `$schema` points at `https://pi.dev/schemas/theme.schema.json` (Pi 1.2.0
-  moved it), and the theme declares `"appearance": "dark"`.
+  moved it). Dark appearance is inferred, keeping the theme valid on Pi 0.87.1 too.
 - **`edit` cards are framed again**: `renderShell: "self"` tools (`edit` in Pi 1.5) are no longer
   skipped, so edit diffs get the same sakura card as every other tool.
 - **Status labels carry the state**: `✓ BASH · COMPLETE` / `◆ BASH · RUNNING` / `× BASH · FAILED`,
   plus `+N −M` for diff results.
 - **`npm test` works on Node 26**: constructor parameter properties are gone, so the suite runs on
-  native type stripping (Node >= 22.18); `scripts/check.mjs` guards against reintroducing them.
+  native type stripping (Node >= 22.18); `scripts/check.mjs` now parses with Node's own strip-only
+  mode, catching non-erasable syntax anywhere without executing source.
 
 ### Changed
 
+- Bash call headers use `❯` and Pi's active shell syntax colors; PowerShell uses its own grammar and
+  `PS>` prompt. Long commands wrap with a hanging indent, show five visual rows while collapsed,
+  and expand fully with the user's configured keybinding. Uses `registerToolRenderer` when available;
+  execution, timers, results, truncation warnings and full-output links stay native.
+- Tool status labels/rails use the active theme's semantic colors, not fixed RGB. Arbitrary log text
+  is not classified as tool failure; structured warnings and errors keep Pi's own rendering.
+- Thought-trail rows are literal display text: inline Markdown is not reparsed after prewrapping.
 - Tool card status labels now always carry the state, plus diff counts when the tool's result has a
   unified diff: `◆ BASH · RUNNING`, `✓ BASH · COMPLETE`, `× BASH · FAILED`, `✓ EDIT · +3 −2 · COMPLETE`.
   Previously the settled state showed only `✓ BASH` — no state word, no counts. Counts are read from
@@ -42,6 +58,26 @@ flags.
 
 ### Fixed
 
+- Thought-trail rails escaping to line ends when inline backticks spanned prewrapped rows; regression
+  checks now use Pi's real Markdown renderer with code, links, math, CJK/emoji and multiple widths.
+  Digest text is sanitized before measurement; terminal controls/bidi overrides cannot escape to the
+  terminal. Very narrow widths fall back to native thinking; clipped headers no longer split ANSI.
+- Borderless custom editors losing their first/last rows. Editor mouse events now map through the
+  frame to body/autocomplete coordinates, and wrappers forward fullscreen autocomplete paging.
+- `NO_COLOR` leaking theme colors from pack-owned chrome and colors in shell expansion key hints.
+- User-message theme color-source settings not repainting cached cards.
+- Unified-diff changes starting with `+++` or `---` mistaken for file headers inside hunks.
+- Theme schema tests skipping installed Pi 1.5.2 after its schema moved; both current and legacy
+  paths are checked. Removed the optional `appearance` key rejected by Pi 0.87.1's schema.
+- Legacy migration notice asking users to enable fullscreen when Pi already defaults to it.
+- Node strip-only syntax guard missing parameter properties after commas: now uses Node's own
+  parser without executing source, also catching enums and other non-erasable syntax.
+- Editor extensions loaded after Zentui (e.g. `pi-fff`) no longer drop the editor rails and model line
+  (#4). Reconcile on Pi's public `resources_discover` event after all `session_start` handlers finish,
+  and on later surface events; wrap the foreign editor to preserve input and autocomplete. No timed
+  settle window or polling is needed.
+- Type checking resolves both nested and hoisted Pi dev packages; the tool-renderer test accepts
+  Pi 1.5's `unknown` arguments.
 - Theme `$schema` still pointed at the pre-1.2.0 raw GitHub path.
 - `npm test` passed the removed `--experimental-transform-types` flag.
 
