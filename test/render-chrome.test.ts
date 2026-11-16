@@ -13,7 +13,7 @@ import {
 	applyThinkingLabel,
 	SAKURA_HIDDEN_THINKING_LABEL,
 } from "../extensions/zentui/thinking-message";
-import { installToolExecutionStyle } from "../extensions/zentui/tool-execution";
+import { diffStats, installToolExecutionStyle } from "../extensions/zentui/tool-execution";
 import { installUserMessageStyle } from "../extensions/zentui/user-message";
 
 type AnyRecord = Record<string, any>;
@@ -76,8 +76,11 @@ function makeTool(options: { body?: string; renderShell?: "default" | "self"; na
 	);
 }
 
-function finish(tool: ToolExecutionComponent, isError: boolean, text = "done") {
-	tool.updateResult({ content: [{ type: "text", text }], isError }, false);
+function finish(tool: ToolExecutionComponent, isError: boolean, text = "done", diff?: string) {
+	tool.updateResult(
+		{ content: [{ type: "text", text }], isError, ...(diff === undefined ? {} : { details: { diff } }) } as never,
+		false,
+	);
 }
 
 test("tool card passes Pi's body lines through byte-for-byte inside the frame", () => {
@@ -89,7 +92,7 @@ test("tool card passes Pi's body lines through byte-for-byte inside the frame", 
 
 	assert.equal(out[0], "", "Pi's spacer row stays above the frame");
 	assert.equal(out.length, inner.length + 2, "only a title row and a bottom row are added");
-	assert.match(strip(out[1]!), /^╭─ ✓ READ FILE ─+╮$/);
+	assert.match(strip(out[1]!), /^╭─ ✓ READ FILE · COMPLETE ─+╮$/);
 	assert.match(strip(out.at(-1)!), /^╰─+╯$/);
 	for (let i = 1; i < inner.length; i++) {
 		const line = out[i + 1]!;
@@ -110,7 +113,7 @@ test("tool status comes from component state, not body text", () => {
 
 	const ok = makeTool({ body: "error: looks bad but is fine" });
 	finish(ok, false);
-	assert.match(strip(ok.render(50)[1]!), /✓ READ FILE/);
+	assert.match(strip(ok.render(50)[1]!), /✓ READ FILE · COMPLETE/);
 
 	const running = makeTool();
 	assert.match(strip(running.render(50)[1]!), /◆ READ FILE · RUNNING/);
@@ -140,6 +143,20 @@ test("settled tool card is cached (same array while nothing changed)", () => {
 	assert.match(strip(failed[1]!), /FAILED/);
 });
 
+test("diff tools add +N −M from the result diff, not from rendered text", () => {
+	assert.deepEqual(diffStats("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n+extra"), { added: 2, removed: 1 });
+	assert.equal(diffStats(""), undefined);
+	assert.equal(diffStats(undefined), undefined);
+
+	const tool = makeTool({ name: "edit" });
+	finish(tool, false, "ok", "--- a/x\n+++ b/x\n@@\n-a\n+b\n+c");
+	assert.match(strip(tool.render(60)[1]!), /^╭─ ✓ EDIT · \+2 −1 · COMPLETE ─+╮$/);
+
+	const plain = makeTool({ name: "bash" });
+	finish(plain, false);
+	assert.match(strip(plain.render(60)[1]!), /^╭─ ✓ BASH · COMPLETE ─+╮$/);
+});
+
 test("self-rendered tools (e.g. edit) are framed too", () => {
 	const tool = makeTool({ renderShell: "self" });
 	finish(tool, false);
@@ -147,7 +164,7 @@ test("self-rendered tools (e.g. edit) are framed too", () => {
 	const inner = stockToolRender.call(tool, width - 3);
 	const out = tool.render(width);
 	assert.equal(out.length, inner.length + 2, "title row and bottom row are added");
-	assert.match(strip(out[1]!), /^╭─ ✓ READ FILE ─+╮$/);
+	assert.match(strip(out[1]!), /^╭─ ✓ READ FILE · COMPLETE ─+╮$/);
 	assert.match(strip(out.at(-1)!), /^╰─+╯$/);
 	for (let i = 1; i < inner.length; i++) {
 		assert.equal(strip(out[i + 1]!), `┃ ${strip(inner[i]!)}│`, `body line ${i} wrapped, not rewritten`);

@@ -25,7 +25,7 @@ type ToolStatus = "running" | "ok" | "error";
 /** Private ToolExecutionComponent fields read defensively (present in Pi 0.87.1 and 0.99.1). */
 type ToolExecutionRuntime = {
 	isPartial?: unknown;
-	result?: { isError?: unknown; content?: unknown };
+	result?: { isError?: unknown; content?: unknown; details?: unknown };
 	toolName?: unknown;
 	expanded?: unknown;
 	hideComponent?: unknown;
@@ -40,6 +40,8 @@ type CardRender = {
 	expanded: boolean;
 	name: string;
 	colorMode: string;
+	added: number;
+	removed: number;
 	/** Number of leading inner lines kept outside the frame (Pi's spacer row). */
 	prefix: number;
 	inner: readonly string[];
@@ -89,10 +91,37 @@ function isFrameable(runtime: ToolExecutionRuntime): boolean {
 	return !hasImageResult(runtime);
 }
 
-function statusText(status: ToolStatus, name: string): string {
-	if (status === "running") return `◆ ${name} · RUNNING`;
-	if (status === "error") return `× ${name} · FAILED`;
-	return `✓ ${name}`;
+export type DiffStats = { added: number; removed: number };
+
+/**
+ * `+N −M` from the tool result's own unified diff (`result.details.diff`, as Pi's edit tool
+ * provides). Read, never rewritten — unlike counting markers in the rendered body.
+ */
+export function diffStats(diff: string | undefined): DiffStats | undefined {
+	if (typeof diff !== "string" || !diff) return undefined;
+	let added = 0;
+	let removed = 0;
+	for (const line of diff.split("\n")) {
+		if (line.startsWith("+++") || line.startsWith("---")) continue;
+		if (line.startsWith("+")) added += 1;
+		else if (line.startsWith("-")) removed += 1;
+	}
+	return added || removed ? { added, removed } : undefined;
+}
+
+function statsSuffix(stats: DiffStats | undefined): string {
+	if (!stats) return "";
+	const parts: string[] = [];
+	if (stats.added > 0) parts.push(`+${stats.added}`);
+	if (stats.removed > 0) parts.push(`−${stats.removed}`);
+	return parts.length ? ` · ${parts.join(" ")}` : "";
+}
+
+function statusText(status: ToolStatus, name: string, stats: DiffStats | undefined): string {
+	const tail = statsSuffix(stats);
+	if (status === "running") return `◆ ${name}${tail} · RUNNING`;
+	if (status === "error") return `× ${name}${tail} · FAILED`;
+	return `✓ ${name}${tail} · COMPLETE`;
 }
 
 /** `╭─ label ───╮` fitted to exactly `width` cells (label clipped per character, no ellipsis). */
@@ -127,12 +156,13 @@ function buildCard(
 	width: number,
 	status: ToolStatus,
 	name: string,
+	stats: DiffStats | undefined,
 ): { lines: string[]; prefix: number } {
 	const prefix = inner[0] === "" ? 1 : 0; // Pi's Spacer(1) row stays above the frame
 	const left = paintFg(STATUS_RGB[status], LEFT_RAIL);
 	const right = paintFg(FRAME_RGB, RIGHT_RAIL);
 	const lines: string[] = inner.slice(0, prefix);
-	lines.push(renderSakuraFrameGradient(frameTop(statusText(status, name), width)));
+	lines.push(renderSakuraFrameGradient(frameTop(statusText(status, name, stats), width)));
 	for (let i = prefix; i < inner.length; i++) lines.push(`${left}${inner[i]}${right}`);
 	lines.push(renderSakuraFrameGradient(frameBottom(width)));
 	return { lines, prefix };
@@ -186,6 +216,8 @@ export function installToolExecutionStyle(_getTheme?: () => Theme | undefined): 
 			const expanded = runtime.expanded === true;
 			const name = toolLabelName(runtime);
 			const colorMode = getColorMode();
+			const details = runtime.result?.details as { diff?: unknown } | undefined;
+			const stats = diffStats(typeof details?.diff === "string" ? details.diff : undefined);
 			const cached = cards.get(receiver as object);
 			if (
 				cached &&
@@ -194,12 +226,14 @@ export function installToolExecutionStyle(_getTheme?: () => Theme | undefined): 
 				cached.expanded === expanded &&
 				cached.name === name &&
 				cached.colorMode === colorMode &&
+				cached.added === (stats?.added ?? 0) &&
+				cached.removed === (stats?.removed ?? 0) &&
 				sameLines(cached.inner, lines)
 			) {
 				return cached.lines;
 			}
 
-			const card = buildCard(lines, width, status, name);
+			const card = buildCard(lines, width, status, name, stats);
 			cards.set(receiver as object, {
 				width,
 				innerWidth,
@@ -207,6 +241,8 @@ export function installToolExecutionStyle(_getTheme?: () => Theme | undefined): 
 				expanded,
 				name,
 				colorMode,
+				added: stats?.added ?? 0,
+				removed: stats?.removed ?? 0,
 				prefix: card.prefix,
 				inner: lines,
 				lines: card.lines,
