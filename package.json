@@ -1,6 +1,6 @@
 {
   "name": "pi-sakura-cyberdeck",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Lightweight Sakura Macaron visual pack for Pi: theme, cyberdeck header, macaron Zentui chrome, Claude-style shimmer, optional matrix rain.",
   "type": "module",
   "license": "MIT",
@@ -24,13 +24,16 @@
     "check": "node scripts/check.mjs",
     "dev:setup": "node scripts/dev-setup.mjs",
     "typecheck": ".dev/node_modules/.bin/tsc -p tsconfig.json",
-    "test": "node --experimental-transform-types --no-warnings --import ./test/register.mjs --test \"test/**/*.test.ts\"",
+    "test": "node --no-warnings --import ./test/register.mjs --test \"test/**/*.test.ts\"",
     "verify": "npm run check && npm run typecheck && npm test",
     "pack:check": "npm pack --dry-run"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
+  },
+  "engines": {
+    "node": ">=22.18"
   },
   "pi": {
     "extensions": [

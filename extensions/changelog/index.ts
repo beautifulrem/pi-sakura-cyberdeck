@@ -1,18 +1,16 @@
-// What's-new notice for pi-sakura-cyberdeck.
-// After an install or `pi update`, the first interactive session shows the new
-// version's highlights above the editor (hidden again on the next message).
-// `/sakura-changelog` opens the full, scrollable changelog at any time.
+// `/sakura-changelog` — scrollable viewer for this pack's changelog.
+//
+// After an update, Pi itself shows the new entries under "Extension Updates" (it reads
+// the root CHANGELOG.md, or `pi.changelogPath`), records the seen version, and honours
+// the `collapseChangelog` setting — so this extension no longer keeps its own notice or
+// state file. `/sakura-changelog` remains useful because Pi's `/changelog` only shows
+// Pi's own changelog, never package changelogs.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { type Component, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-
-const WIDGET_KEY = "sakura-cyberdeck-changelog";
-const STATE_FILE = "sakura-cyberdeck-state.json";
-const MAX_NOTICE_BULLETS = 10;
 
 export interface ChangelogSection {
 	title: string;
@@ -65,28 +63,6 @@ export function parseChangelog(markdown: string): ChangelogEntry[] {
 	return entries;
 }
 
-export function compareVersions(a: string, b: string): number {
-	const pa = a.split(/[.+-]/).map((part) => Number.parseInt(part, 10) || 0);
-	const pb = b.split(/[.+-]/).map((part) => Number.parseInt(part, 10) || 0);
-	for (let i = 0; i < 3; i++) {
-		const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
-		if (diff !== 0) return Math.sign(diff);
-	}
-	return 0;
-}
-
-/** Entries newer than `lastSeen` and not newer than `current`, newest first. */
-export function unseenEntries(
-	entries: ChangelogEntry[],
-	lastSeen: string | undefined,
-	current: string,
-): ChangelogEntry[] {
-	return entries
-		.filter((e) => compareVersions(e.version, current) <= 0)
-		.filter((e) => !lastSeen || compareVersions(e.version, lastSeen) > 0)
-		.sort((a, b) => compareVersions(b.version, a.version));
-}
-
 function stripInlineMarkdown(text: string): string {
 	return text
 		.replace(/\*\*(.+?)\*\*/g, "$1")
@@ -101,18 +77,6 @@ function isBullet(line: string): boolean {
 function bulletText(line: string): string {
 	return stripInlineMarkdown(line.replace(/^\s*[-*]\s+/, ""));
 }
-
-function countBullets(entry: ChangelogEntry): number {
-	// Highlights repeat items listed in the other sections.
-	return entry.sections
-		.filter((s) => !/highlight/i.test(s.title))
-		.reduce((n, s) => n + s.lines.filter((l) => isBullet(l) && !/^\s{2,}/.test(l)).length, 0);
-}
-
-// ---------------------------------------------------------------------------
-// Rendering (pure apart from the theme callbacks)
-
-type Paint = Pick<Theme, "fg" | "bold">;
 
 /** Full changelog lines (used by the scrollable viewer). */
 export function renderChangelogLines(entries: ChangelogEntry[], width: number, theme: Paint): string[] {
@@ -140,71 +104,10 @@ export function renderChangelogLines(entries: ChangelogEntry[], width: number, t
 	return out.map((line) => truncateToWidth(line, width, ""));
 }
 
-/** Compact "what's new" notice shown once after an update. */
-export function renderNoticeLines(entries: ChangelogEntry[], width: number, theme: Paint): string[] {
-	const latest = entries[0];
-	if (!latest) return [];
-	const lines: string[] = [];
-	const title =
-		entries.length > 1
-			? `✿ pi-sakura-cyberdeck ${entries[entries.length - 1]!.version} → ${latest.version}`
-			: `✿ pi-sakura-cyberdeck ${latest.version}`;
-	lines.push(theme.bold(theme.fg("accent", title)) + theme.fg("muted", " · what's new"));
-
-	const highlights = latest.sections.find((s) => /highlight/i.test(s.title));
-	const pool = (highlights ? [highlights] : latest.sections).flatMap((s) =>
-		s.lines.filter((l) => isBullet(l) && !/^\s{2,}/.test(l)),
-	);
-	for (const line of pool.slice(0, MAX_NOTICE_BULLETS)) {
-		const wrapped = wrapTextWithAnsi(`${theme.fg("dim", "•")} ${bulletText(line)}`, Math.max(10, width - 2));
-		wrapped.forEach((part, index) => lines.push(`${index === 0 ? "  " : "    "}${part}`));
-	}
-	const total = entries.reduce((n, e) => n + countBullets(e), 0);
-	lines.push(
-		theme.fg(
-			"muted",
-			`  ${total} changes in total · /sakura-changelog for the full list · hides after your next message`,
-		),
-	);
-	return lines.map((line) => truncateToWidth(line, width, "…"));
-}
+export type Paint = Pick<Theme, "fg" | "bold">;
 
 // ---------------------------------------------------------------------------
-// Persistence
-
-function statePath(): string {
-	return join(getAgentDir(), STATE_FILE);
-}
-
-function readLastSeenVersion(): string | undefined {
-	try {
-		const parsed = JSON.parse(readFileSync(statePath(), "utf8")) as { lastSeenVersion?: unknown };
-		return typeof parsed.lastSeenVersion === "string" ? parsed.lastSeenVersion : undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-function writeLastSeenVersion(version: string): void {
-	try {
-		const path = statePath();
-		mkdirSync(dirname(path), { recursive: true });
-		const tmp = `${path}.${process.pid}.tmp`;
-		writeFileSync(tmp, `${JSON.stringify({ lastSeenVersion: version }, null, 2)}\n`);
-		renameSync(tmp, path);
-	} catch {
-		// Non-fatal: the notice simply shows again next time.
-	}
-}
-
-function readPackageVersion(): string | undefined {
-	try {
-		const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { version?: unknown };
-		return typeof pkg.version === "string" ? pkg.version : undefined;
-	} catch {
-		return undefined;
-	}
-}
+// Files
 
 function readChangelog(): ChangelogEntry[] {
 	const path = join(packageRoot, "CHANGELOG.md");
@@ -223,14 +126,25 @@ class ChangelogViewer implements Component {
 	private offset = 0;
 	private lastWidth = 0;
 	private cache: string[] = [];
+	private readonly entries: ChangelogEntry[];
+	private readonly theme: Theme;
+	private readonly rows: () => number;
+	private readonly requestRender: () => void;
+	private readonly done: () => void;
 
 	constructor(
-		private readonly entries: ChangelogEntry[],
-		private readonly theme: Theme,
-		private readonly rows: () => number,
-		private readonly requestRender: () => void,
-		private readonly done: () => void,
-	) {}
+		entries: ChangelogEntry[],
+		theme: Theme,
+		rows: () => number,
+		requestRender: () => void,
+		done: () => void,
+	) {
+		this.entries = entries;
+		this.theme = theme;
+		this.rows = rows;
+		this.requestRender = requestRender;
+		this.done = done;
+	}
 
 	private pageSize(): number {
 		return Math.max(5, Math.min(40, this.rows() - 8));
@@ -276,69 +190,14 @@ class ChangelogViewer implements Component {
 // Extension
 
 function isTui(ctx: ExtensionContext): boolean {
-	return (ctx as { mode?: string }).mode ? (ctx as { mode?: string }).mode === "tui" : ctx.hasUI;
+	const mode = (ctx as { mode?: string }).mode;
+	return mode ? mode === "tui" : ctx.hasUI;
 }
 
 export default function sakuraChangelog(pi: ExtensionAPI) {
-	let noticeVisible = false;
-	let checkedThisProcess = false;
-
-	const hideNotice = (ctx: ExtensionContext) => {
-		if (!noticeVisible) return;
-		noticeVisible = false;
-		try {
-			ctx.ui.setWidget(WIDGET_KEY, undefined);
-		} catch {
-			// UI already disposed.
-		}
-	};
-
-	pi.on("session_start", (_event, ctx) => {
-		if (checkedThisProcess || !ctx.hasUI) return;
-		const current = readPackageVersion();
-		if (!current) return;
-		const lastSeen = readLastSeenVersion();
-		if (lastSeen && compareVersions(lastSeen, current) >= 0) {
-			checkedThisProcess = true;
-			return;
-		}
-		// No record yet (fresh install, or an update from ≤1.1.6): show just this version.
-		const all = readChangelog();
-		const unseen = lastSeen
-			? unseenEntries(all, lastSeen, current)
-			: all.filter((entry) => compareVersions(entry.version, current) === 0);
-		checkedThisProcess = true;
-		if (!unseen.length) {
-			writeLastSeenVersion(current);
-			return;
-		}
-		if (!isTui(ctx)) {
-			ctx.ui.notify(`pi-sakura-cyberdeck updated to ${current}. Run /sakura-changelog to see what changed.`, "info");
-			writeLastSeenVersion(current);
-			return;
-		}
-		ctx.ui.setWidget(
-			WIDGET_KEY,
-			(_tui, theme) => ({
-				render: (width: number) => [...renderNoticeLines(unseen, width, theme), ""],
-				invalidate: () => {},
-			}),
-			{ placement: "aboveEditor" },
-		);
-		noticeVisible = true;
-		writeLastSeenVersion(current);
-	});
-
-	pi.on("input", (_event, ctx) => {
-		hideNotice(ctx);
-	});
-	pi.on("agent_start", (_event, ctx) => hideNotice(ctx));
-	pi.on("session_shutdown", (_event, ctx) => hideNotice(ctx));
-
 	pi.registerCommand("sakura-changelog", {
 		description: "Show the pi-sakura-cyberdeck changelog (optionally for one version)",
 		handler: async (args, ctx) => {
-			hideNotice(ctx);
 			const all = readChangelog();
 			const wanted = args.trim().replace(/^v/, "");
 			const entries = wanted ? all.filter((e) => e.version === wanted) : all;
@@ -350,7 +209,7 @@ export default function sakuraChangelog(pi: ExtensionAPI) {
 				return;
 			}
 			if (!isTui(ctx)) {
-				const plain = renderChangelogLines(entries, 100, { fg: (_c, t) => t, bold: (t) => t } as Paint);
+				const plain = renderChangelogLines(entries, 100, { fg: (_c: string, t: string) => t, bold: (t: string) => t });
 				ctx.ui.notify(plain.slice(0, 40).join("\n"), "info");
 				return;
 			}
