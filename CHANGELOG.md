@@ -9,13 +9,21 @@ once after updating; run `/sakura-changelog` on any supported Pi to read this fi
 
 - **Sakura prompt borders restored**: submitted questions keep their gradient frame instead of
   changing to a dim solid border in the default theme color-source mode.
+- **Continuous tool-title gradients**: the complete title row, including its leading rule, status
+  symbols/words and diff counts, uses one Sakura gradient matching the local Pi agent's rendering.
 
 ### Fixed
 
 - Sent user-message borders retain their Sakura gradient in both theme and terminal color-source
   modes. Version 1.5.0 incorrectly mapped the default `userMessages: "theme"` frame to `borderMuted`,
   turning the gradient into a dim solid color after submitting a prompt. The color source now affects
-  the message rail only; native message content and theme-aware tool statuses are unchanged.
+  the message rail only; native message content and semantic status rails are unchanged.
+- Tool title rows no longer splice separately sampled border segments around solid theme-colored
+  status words. That split both removed the text gradient and turned the leading rule sky blue.
+  Running, complete, failed, diff-count and clipped titles now share one full-row gradient; status
+  rails remain theme-aware and result output stays native.
+- Added exact-ANSI title regressions across three color modes, four widths, all states and edit diff
+  counts, including cached renders and theme changes.
 - Added a regression using the shipped Sakura theme and Pi's real `UserMessageComponent`, covering
   both color sources, truecolor/256-color/NO_COLOR, multiple widths, caching and invalidation.
 
