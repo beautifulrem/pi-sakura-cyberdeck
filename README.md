@@ -2,7 +2,7 @@
 
 Lightweight Sakura Macaron visual pack for [Pi](https://pi.dev).
 
-**v1.5.0** — robust thought trails, `❯` shell headers with syntax colors and expandable long commands, theme-aware status colors, and editor-extension compatibility fixes. Uses Pi's native extension changelog and runs tests on Node 26. See [what changed](#150).
+**v1.5.1** — restores Sakura gradient borders on sent prompts and continuous gradients across complete tool-title rows. Includes robust thought trails, `❯` shell headers and theme-aware status rails. See [what changed](#151).
 
 ## What’s inside
 
@@ -54,7 +54,8 @@ Other editor extensions (e.g. `pi-fff`) keep their input and autocomplete inside
 ╰──────────────────────────────────╯
 ```
 
-- Tool cards: sakura frame + semantic status label/rail (`toolTitle` running / `success` done / `error` failed); result output stays Pi’s own render, byte-for-byte
+- Sent prompts keep Sakura gradient borders in both color-source modes; `colorSources.userMessages` controls the rail, not the gradient frame
+- Tool cards: one continuous Sakura gradient across the whole title (rules, status symbol/text and diff counts); semantic status rail (`toolTitle` running / `success` done / `error` failed); result output stays Pi’s own render, byte-for-byte
 - Status label always carries the state: `◆ READ · RUNNING`, `✓ READ · COMPLETE`, `× READ · FAILED`
 - Diff results (`edit`) add their `+N −M` line counts from Pi's own result diff (`details.diff`); other tools never show a count
 - Bash headers use `❯`, not `$`: `❯ cd pi-sakura-cyberdeck && npm run typecheck && npm test (timeout 120s)`
@@ -184,6 +185,16 @@ Avoid stacking with `pi-zentui`, `pi-powerline-footer`, stock `pi-claude-shimmer
 ## Changelog
 
 Full history: [CHANGELOG.md](CHANGELOG.md) (also available in Pi via `/sakura-changelog`).
+
+### 1.5.1
+
+- Restored Sakura gradient borders on sent prompts. In 1.5.0 the default `userMessages: "theme"`
+  incorrectly used `borderMuted` for the frame, making it a dim solid color after submission.
+- Theme/terminal color-source selection now affects the message rail only. Native message output
+  stays unchanged. Regression tests use the real component and shipped theme.
+- Tool titles now sample one continuous Sakura gradient across the entire row, including the leading
+  rule, `✓ BASH · COMPLETE` (or RUNNING/FAILED) and edit diff counts. This removes solid-color status
+  words and the incorrectly blue leading rule. Semantic state colors remain on the vertical rail.
 
 ### 1.5.0
 

@@ -70,7 +70,8 @@ export function installUserMessageStyle(
 
 			const lines = inner as string[];
 			const theme = config?.colorSources?.userMessages === "theme" ? getTheme?.() : undefined;
-			const border = theme ? safeThemeFg(theme, "borderMuted", "─".repeat(width)) : renderSakuraFrameGradient("─".repeat(width));
+			// The brand frame stays gradient; colorSources.userMessages controls the rail only.
+			const border = renderSakuraFrameGradient("─".repeat(width));
 			const paintedRail = theme ? safeThemeFg(theme, "accent", rail.text) : paintFg(RAIL_RGB, rail.text);
 			const chromeKey = `${paintedRail}\0${border}\0${getColorMode()}`;
 			const cached = cards.get(receiver as object);

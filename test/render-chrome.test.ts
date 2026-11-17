@@ -10,13 +10,14 @@ import {
 import { type Component, Container, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { getColorMode, setColorMode } from "../extensions/shared/color";
 import { renderStyleForSource, safeThemeFg } from "../extensions/zentui/style";
+import { renderSakuraFrameGradient } from "../extensions/zentui/gradient";
 import type { PolishedTuiConfig } from "../extensions/zentui/config";
 import { patchSelectorBorderStyle } from "../extensions/zentui/selector-border";
 import {
 	applyThinkingLabel,
 	SAKURA_HIDDEN_THINKING_LABEL,
 } from "../extensions/zentui/thinking-message";
-import { diffStats, installToolExecutionStyle } from "../extensions/zentui/tool-execution";
+import { diffStats, frameBottom, frameTop, installToolExecutionStyle } from "../extensions/zentui/tool-execution";
 import { installUserMessageStyle } from "../extensions/zentui/user-message";
 
 type AnyRecord = Record<string, any>;
@@ -163,6 +164,39 @@ test("diff tools add +N −M from the result diff, not from rendered text", () =
 	assert.match(strip(plain.render(60)[1]!), /^╭─ ✓ BASH · COMPLETE ─+╮$/);
 });
 
+test("tool titles use one continuous frame gradient across borders, status words and diff counts", () => {
+	const previous = getColorMode();
+	try {
+		activeTheme = new Theme({ error: "#010203", success: "#040506", toolTitle: "#070809", muted: "#778899", text: "#ffffff", thinkingXhigh: "#998877" } as never, { selectedBg: "#111111" } as never, "truecolor");
+		const running = makeTool({ name: "bash" });
+		const complete = makeTool({ name: "bash" });
+		finish(complete, false);
+		const failed = makeTool({ name: "bash" });
+		finish(failed, true);
+		const edit = makeTool({ name: "edit", renderShell: "self" });
+		finish(edit, false, "ok", "@@ -1 +1,2 @@\n-old\n+new\n+extra");
+		const cases = [
+			[running, "◆ BASH · RUNNING"], [complete, "✓ BASH · COMPLETE"],
+			[failed, "× BASH · FAILED"], [edit, "✓ EDIT · +2 −1 · COMPLETE"],
+		] as const;
+		for (const mode of ["truecolor", "256color", "none"] as const) {
+			setColorMode(mode);
+			for (const width of [12, 24, 60, 120]) {
+				for (const [tool, label] of cases) {
+					const lines = tool.render(width);
+					assert.equal(lines[1], renderSakuraFrameGradient(frameTop(label, width)), `${mode}/${width}/${label}`);
+					assert.equal(lines.at(-1), renderSakuraFrameGradient(frameBottom(width)));
+					assert.equal(visibleWidth(lines[1]!), width);
+					assert.equal(tool.render(width), lines, "unchanged cards remain cached");
+				}
+			}
+		}
+	} finally {
+		activeTheme = undefined;
+		setColorMode(previous);
+	}
+});
+
 test("semantic chrome follows theme changes and pack colors honor NO_COLOR", () => {
 	const previous = getColorMode();
 	const sources = config.colorSources;
@@ -172,15 +206,22 @@ test("semantic chrome follows theme changes and pack colors honor NO_COLOR", () 
 		const failed = makeTool({ name: "bash" });
 		finish(failed, true);
 		const first = failed.render(60);
-		assert.ok(first[1]!.includes(activeTheme.fg("error", "× BASH · FAILED")));
+		assert.equal(first[1], renderSakuraFrameGradient(frameTop("× BASH · FAILED", 60)));
 		assert.ok(first[2]!.startsWith(activeTheme.fg("error", "┃ ")));
 		activeTheme = new Theme({ error: "#030201", accent: "#221133", borderMuted: "#443355", muted: "#778899", text: "#ffffff", thinkingXhigh: "#998877" } as never, { selectedBg: "#111111" } as never, "truecolor");
-		assert.notEqual(failed.render(60), first, "theme changes invalidate settled chrome");
+		const repainted = failed.render(60);
+		assert.notEqual(repainted, first, "theme changes invalidate settled chrome");
+		assert.equal(repainted[1], first[1], "theme changes affect the status rail, not the brand-gradient title");
+		assert.ok(repainted[2]!.startsWith(activeTheme.fg("error", "┃ ")));
 		config.colorSources = { userMessages: "theme" } as never;
 		const user = new UserMessageComponent("hello");
-		assert.equal(user.render(60)[0], activeTheme.fg("borderMuted", "─".repeat(60)));
+		const themed = user.render(60);
+		assert.equal(themed[0], renderSakuraFrameGradient("─".repeat(60)));
+		assert.ok(themed.some((line) => line.startsWith(activeTheme!.fg("accent", `${config.icons.rail} `))), "rail follows the active theme");
 		config.colorSources = { userMessages: "terminal" } as never;
-		assert.notEqual(user.render(60)[0], activeTheme.fg("borderMuted", "─".repeat(60)), "color source toggle repaints cached cards");
+		const terminal = user.render(60);
+		assert.notEqual(terminal, themed, "color source toggle repaints cached rails");
+		assert.equal(terminal[0], themed[0], "color source never replaces the gradient border");
 		setColorMode("none");
 		assert.equal(safeThemeFg(activeTheme, "error", "label"), "label");
 		assert.equal(renderStyleForSource(activeTheme, "theme", "error", "label"), "label");
