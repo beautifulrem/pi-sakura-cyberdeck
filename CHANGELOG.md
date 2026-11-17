@@ -3,6 +3,22 @@
 All notable changes to pi-sakura-cyberdeck. Pi >= 1.5.0 shows new package entries
 once after updating; run `/sakura-changelog` on any supported Pi to read this file.
 
+## [1.5.1] - 2026-11-17
+
+### Highlights
+
+- **Sakura prompt borders restored**: submitted questions keep their gradient frame instead of
+  changing to a dim solid border in the default theme color-source mode.
+
+### Fixed
+
+- Sent user-message borders retain their Sakura gradient in both theme and terminal color-source
+  modes. Version 1.5.0 incorrectly mapped the default `userMessages: "theme"` frame to `borderMuted`,
+  turning the gradient into a dim solid color after submitting a prompt. The color source now affects
+  the message rail only; native message content and theme-aware tool statuses are unchanged.
+- Added a regression using the shipped Sakura theme and Pi's real `UserMessageComponent`, covering
+  both color sources, truecolor/256-color/NO_COLOR, multiple widths, caching and invalidation.
+
 ## [1.5.0] - 2026-11-18
 
 Rendering robustness release built against Pi 1.5.2: shell command headers get a `❯` prompt, theme

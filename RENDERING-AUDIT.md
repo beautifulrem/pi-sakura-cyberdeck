@@ -22,7 +22,7 @@
 | 编辑器点击位置、补全命中错位 | 显示层增加轨道、空行和元数据，却未映射鼠标坐标。保存逐行映射，分别转换正文/补全位置，忽略 chrome。 | 同上 |
 | 包装后的编辑器失去分页/拖拽结束事件 | 转发 `capturesViewportInput`，并保存捕获手势的坐标变换，使拖拽/释放落在边框外时仍送达内部编辑器。没有依赖未从公共入口导出的鼠标 dispatcher。 | 同上 |
 | `NO_COLOR` 漏色 | 共享 theme 颜色辅助函数和由宿主着色的展开提示可能绕过本包颜色模式。现在本包产生的颜色遵循关闭状态；不剥除 Pi 自己的结果正文颜色。 | `style.ts`、`shell-call.ts` |
-| 用户消息颜色来源设置无效 | `colorSources.userMessages` 未使用，缓存也不含解析后的样式。现在 theme 模式取主题边框/强调色，terminal 模式保留品牌色，切换后重绘。 | `user-message.ts` |
+| 用户消息颜色来源设置无效 | `colorSources.userMessages` 未使用，缓存也不含解析后的样式。1.5.0 让 theme 模式使用主题边框/强调色，但随后确认默认 `borderMuted` 会使发送后的渐变边框变暗。1.5.1 保留品牌渐变边框，颜色来源只影响轨道，并继续在切换后重绘。 | `user-message.ts` |
 | diff 统计漏计 `+++` / `---` 内容 | 原实现把所有此类行都当文件头。现在根据 unified diff 的 hunk 位置及行计数区分文件头与改动内容；Pi 的带行号 display diff 继续支持。 | `tool-execution.ts` |
 | 最新 Pi 的主题测试实际没跑 | 仍只找旧 schema 路径。先查 `schemas/theme.schema.json`，再回退旧路径；宿主已安装却无 schema 时失败而非静默跳过。 | `test/theme.test.ts` |
 | 旧版主题 schema 不兼容 | 实际安装 Pi 0.87.1 后，证实它不接受可选的 `appearance` 顶层键。移除此键，不提高最低支持版本；新 Pi 可推断暗色外观。 | `themes/sakura-macaron.json` |

@@ -10,6 +10,7 @@ import {
 import { type Component, Container, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { getColorMode, setColorMode } from "../extensions/shared/color";
 import { renderStyleForSource, safeThemeFg } from "../extensions/zentui/style";
+import { renderSakuraFrameGradient } from "../extensions/zentui/gradient";
 import type { PolishedTuiConfig } from "../extensions/zentui/config";
 import { patchSelectorBorderStyle } from "../extensions/zentui/selector-border";
 import {
@@ -178,9 +179,13 @@ test("semantic chrome follows theme changes and pack colors honor NO_COLOR", () 
 		assert.notEqual(failed.render(60), first, "theme changes invalidate settled chrome");
 		config.colorSources = { userMessages: "theme" } as never;
 		const user = new UserMessageComponent("hello");
-		assert.equal(user.render(60)[0], activeTheme.fg("borderMuted", "─".repeat(60)));
+		const themed = user.render(60);
+		assert.equal(themed[0], renderSakuraFrameGradient("─".repeat(60)));
+		assert.ok(themed.some((line) => line.startsWith(activeTheme!.fg("accent", `${config.icons.rail} `))), "rail follows the active theme");
 		config.colorSources = { userMessages: "terminal" } as never;
-		assert.notEqual(user.render(60)[0], activeTheme.fg("borderMuted", "─".repeat(60)), "color source toggle repaints cached cards");
+		const terminal = user.render(60);
+		assert.notEqual(terminal, themed, "color source toggle repaints cached rails");
+		assert.equal(terminal[0], themed[0], "color source never replaces the gradient border");
 		setColorMode("none");
 		assert.equal(safeThemeFg(activeTheme, "error", "label"), "label");
 		assert.equal(renderStyleForSource(activeTheme, "theme", "error", "label"), "label");
