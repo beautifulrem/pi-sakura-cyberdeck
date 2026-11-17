@@ -363,6 +363,13 @@ export type DirectCommand =
 export const FIXED_EDITOR_REMOVED_MESSAGE =
 	'Zentui fixed-editor was removed. For a pinned editor use Pi\'s built-in fullscreen mode: set "tuiMode": "fullscreen" in Pi settings.';
 
+/** Same notice, but acknowledges a user already in fullscreen mode. */
+export function fixedEditorRemovedMessage(tuiMode?: string): string {
+	return tuiMode === "fullscreen"
+		? "Zentui fixed-editor was removed; Pi's built-in fullscreen mode (already active) replaces it."
+		: FIXED_EDITOR_REMOVED_MESSAGE;
+}
+
 /**
  * Strict `/zentui <target> <action>` parser: exactly two tokens, each matched
  * exactly (case-insensitive). No fuzzy word search, so e.g. `fixed-editor disable`

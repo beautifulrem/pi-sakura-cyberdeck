@@ -5,15 +5,18 @@ import {
 	initTheme,
 	ToolExecutionComponent,
 	UserMessageComponent,
+	Theme,
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Container, Text, visibleWidth } from "@earendil-works/pi-tui";
+import { getColorMode, setColorMode } from "../extensions/shared/color";
+import { renderStyleForSource, safeThemeFg } from "../extensions/zentui/style";
 import type { PolishedTuiConfig } from "../extensions/zentui/config";
 import { patchSelectorBorderStyle } from "../extensions/zentui/selector-border";
 import {
 	applyThinkingLabel,
 	SAKURA_HIDDEN_THINKING_LABEL,
 } from "../extensions/zentui/thinking-message";
-import { installToolExecutionStyle } from "../extensions/zentui/tool-execution";
+import { diffStats, installToolExecutionStyle } from "../extensions/zentui/tool-execution";
 import { installUserMessageStyle } from "../extensions/zentui/user-message";
 
 type AnyRecord = Record<string, any>;
@@ -30,10 +33,11 @@ const config = {
 	icons: { rail: "▐" },
 } as unknown as PolishedTuiConfig;
 
+let activeTheme: Theme | undefined;
 let cleanups: Array<() => void> = [];
 before(() => {
 	initTheme("dark");
-	cleanups = [installToolExecutionStyle(), installUserMessageStyle(undefined, () => config)];
+	cleanups = [installToolExecutionStyle(() => activeTheme), installUserMessageStyle(() => activeTheme, () => config)];
 });
 after(() => {
 	for (const cleanup of cleanups.reverse()) cleanup();
@@ -68,7 +72,7 @@ function makeTool(options: { body?: string; renderShell?: "default" | "self"; na
 		{},
 		{
 			renderShell: options.renderShell,
-			renderCall: (args: AnyRecord) => textComponent(`read ${args.path}`),
+			renderCall: (args: unknown) => textComponent(`read ${(args as AnyRecord).path}`),
 			renderResult: () => textComponent(body),
 		},
 		ui,
@@ -76,8 +80,11 @@ function makeTool(options: { body?: string; renderShell?: "default" | "self"; na
 	);
 }
 
-function finish(tool: ToolExecutionComponent, isError: boolean, text = "done") {
-	tool.updateResult({ content: [{ type: "text", text }], isError }, false);
+function finish(tool: ToolExecutionComponent, isError: boolean, text = "done", diff?: string) {
+	tool.updateResult(
+		{ content: [{ type: "text", text }], isError, ...(diff === undefined ? {} : { details: { diff } }) } as never,
+		false,
+	);
 }
 
 test("tool card passes Pi's body lines through byte-for-byte inside the frame", () => {
@@ -89,7 +96,7 @@ test("tool card passes Pi's body lines through byte-for-byte inside the frame", 
 
 	assert.equal(out[0], "", "Pi's spacer row stays above the frame");
 	assert.equal(out.length, inner.length + 2, "only a title row and a bottom row are added");
-	assert.match(strip(out[1]!), /^╭─ ✓ READ FILE ─+╮$/);
+	assert.match(strip(out[1]!), /^╭─ ✓ READ FILE · COMPLETE ─+╮$/);
 	assert.match(strip(out.at(-1)!), /^╰─+╯$/);
 	for (let i = 1; i < inner.length; i++) {
 		const line = out[i + 1]!;
@@ -110,7 +117,7 @@ test("tool status comes from component state, not body text", () => {
 
 	const ok = makeTool({ body: "error: looks bad but is fine" });
 	finish(ok, false);
-	assert.match(strip(ok.render(50)[1]!), /✓ READ FILE/);
+	assert.match(strip(ok.render(50)[1]!), /✓ READ FILE · COMPLETE/);
 
 	const running = makeTool();
 	assert.match(strip(running.render(50)[1]!), /◆ READ FILE · RUNNING/);
@@ -140,10 +147,62 @@ test("settled tool card is cached (same array while nothing changed)", () => {
 	assert.match(strip(failed[1]!), /FAILED/);
 });
 
-test("self-rendered tools stay stock", () => {
+test("diff tools add +N −M from the result diff, not from rendered text", () => {
+	assert.deepEqual(diffStats("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n+extra"), { added: 2, removed: 1 });
+	assert.equal(diffStats(""), undefined);
+	assert.equal(diffStats(undefined), undefined);
+	assert.deepEqual(diffStats("@@ -1 +1 @@\n---old\n+++new"), { added: 1, removed: 1 });
+	assert.deepEqual(diffStats("--- a/x\n+++ b/x\n@@ -1 +1 @@\n---old\n+++new\n--- a/y\n+++ b/y\n@@ -1 +1 @@\n-a\n+b"), { added: 2, removed: 2 });
+
+	const tool = makeTool({ name: "edit" });
+	finish(tool, false, "ok", "--- a/x\n+++ b/x\n@@\n-a\n+b\n+c");
+	assert.match(strip(tool.render(60)[1]!), /^╭─ ✓ EDIT · \+2 −1 · COMPLETE ─+╮$/);
+
+	const plain = makeTool({ name: "bash" });
+	finish(plain, false);
+	assert.match(strip(plain.render(60)[1]!), /^╭─ ✓ BASH · COMPLETE ─+╮$/);
+});
+
+test("semantic chrome follows theme changes and pack colors honor NO_COLOR", () => {
+	const previous = getColorMode();
+	const sources = config.colorSources;
+	try {
+		setColorMode("truecolor");
+		activeTheme = new Theme({ error: "#010203", accent: "#112233", borderMuted: "#334455", muted: "#778899", text: "#ffffff", thinkingXhigh: "#998877" } as never, { selectedBg: "#111111" } as never, "truecolor");
+		const failed = makeTool({ name: "bash" });
+		finish(failed, true);
+		const first = failed.render(60);
+		assert.ok(first[1]!.includes(activeTheme.fg("error", "× BASH · FAILED")));
+		assert.ok(first[2]!.startsWith(activeTheme.fg("error", "┃ ")));
+		activeTheme = new Theme({ error: "#030201", accent: "#221133", borderMuted: "#443355", muted: "#778899", text: "#ffffff", thinkingXhigh: "#998877" } as never, { selectedBg: "#111111" } as never, "truecolor");
+		assert.notEqual(failed.render(60), first, "theme changes invalidate settled chrome");
+		config.colorSources = { userMessages: "theme" } as never;
+		const user = new UserMessageComponent("hello");
+		assert.equal(user.render(60)[0], activeTheme.fg("borderMuted", "─".repeat(60)));
+		config.colorSources = { userMessages: "terminal" } as never;
+		assert.notEqual(user.render(60)[0], activeTheme.fg("borderMuted", "─".repeat(60)), "color source toggle repaints cached cards");
+		setColorMode("none");
+		assert.equal(safeThemeFg(activeTheme, "error", "label"), "label");
+		assert.equal(renderStyleForSource(activeTheme, "theme", "error", "label"), "label");
+	} finally {
+		activeTheme = undefined;
+		config.colorSources = sources;
+		setColorMode(previous);
+	}
+});
+
+test("self-rendered tools (e.g. edit) are framed too", () => {
 	const tool = makeTool({ renderShell: "self" });
 	finish(tool, false);
-	assert.deepEqual(tool.render(60), stockToolRender.call(tool, 60));
+	const width = 60;
+	const inner = stockToolRender.call(tool, width - 3);
+	const out = tool.render(width);
+	assert.equal(out.length, inner.length + 2, "title row and bottom row are added");
+	assert.match(strip(out[1]!), /^╭─ ✓ READ FILE · COMPLETE ─+╮$/);
+	assert.match(strip(out.at(-1)!), /^╰─+╯$/);
+	for (let i = 1; i < inner.length; i++) {
+		assert.equal(strip(out[i + 1]!), `┃ ${strip(inner[i]!)}│`, `body line ${i} wrapped, not rewritten`);
+	}
 });
 
 test("tool and user cards never exceed the requested width (CJK/emoji)", () => {

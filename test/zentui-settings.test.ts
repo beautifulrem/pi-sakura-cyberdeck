@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { defaultConfig } from "../extensions/zentui/config";
 import {
 	FIXED_EDITOR_REMOVED_MESSAGE,
+	fixedEditorRemovedMessage,
 	parseDirectCommand,
 	parseFormatCommand,
 	registerZentuiSettingsCommand,
@@ -98,4 +99,12 @@ test("format command needs the exact `format` keyword", () => {
 	assert.deepEqual(parseFormatCommand("format clear"), { value: undefined });
 	assert.deepEqual(parseFormatCommand("format"), { value: undefined });
 	assert.equal(parseFormatCommand("formatting on"), undefined);
+});
+
+test("the fixed-editor notice is tailored to the current TUI mode", () => {
+	assert.equal(fixedEditorRemovedMessage(undefined), FIXED_EDITOR_REMOVED_MESSAGE);
+	assert.equal(fixedEditorRemovedMessage("regular"), FIXED_EDITOR_REMOVED_MESSAGE);
+	const fullscreen = fixedEditorRemovedMessage("fullscreen");
+	assert.notEqual(fullscreen, FIXED_EDITOR_REMOVED_MESSAGE);
+	assert.match(fullscreen, /fullscreen/i);
 });

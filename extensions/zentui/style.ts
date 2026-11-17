@@ -200,6 +200,7 @@ function applyThemeModifiers(theme: ThemeLike, styleTokens: string[], text: stri
 }
 
 export function safeThemeFg(theme: ThemeLike, color: string, text: string): string {
+	if (getColorMode() === "none") return text;
 	try {
 		return theme.fg(color, text);
 	} catch {

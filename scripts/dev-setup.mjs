@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dev = resolve(root, ".dev");
-const piVersion = process.env.PI_VERSION ?? "0.99.1";
+const piVersion = process.env.PI_VERSION ?? "1.5.2";
 mkdirSync(dev, { recursive: true });
 if (!existsSync(resolve(dev, "package.json"))) writeFileSync(resolve(dev, "package.json"), '{"private":true}\n');
 execFileSync(
