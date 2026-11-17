@@ -50,7 +50,7 @@ type CardRender = {
 	lines: string[];
 };
 
-// Fallback only when no active theme is available. Semantic status follows Pi's theme.
+// Fallback only when no active theme is available. Semantic status rails follow Pi's theme.
 const STATUS_RGB: Record<ToolStatus, RGB> = {
 	running: [159, 211, 242],
 	ok: [174, 229, 197],
@@ -176,13 +176,8 @@ function buildCard(
 	const left = theme ? safeThemeFg(theme, role, LEFT_RAIL) : paintFg(STATUS_RGB[status], LEFT_RAIL);
 	const right = paintFg(FRAME_RGB, RIGHT_RAIL);
 	const lines: string[] = inner.slice(0, prefix);
-	const label = statusText(status, name, stats);
-	const top = frameTop(label, width);
-	lines.push(theme
-		? top.includes(label)
-			? renderSakuraFrameGradient(top.slice(0, 3)) + safeThemeFg(theme, role, label) + renderSakuraFrameGradient(top.slice(3 + label.length))
-			: safeThemeFg(theme, role, top)
-		: renderSakuraFrameGradient(top));
+	// Sample the entire fitted row once: borders, state words and diff counts share one gradient.
+	lines.push(renderSakuraFrameGradient(frameTop(statusText(status, name, stats), width)));
 	for (let i = prefix; i < inner.length; i++) lines.push(`${left}${inner[i]}${right}`);
 	lines.push(renderSakuraFrameGradient(frameBottom(width)));
 	return { lines, prefix };

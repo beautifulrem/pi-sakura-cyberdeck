@@ -105,7 +105,7 @@ const colorSettingDescriptions: Record<ColorSettingId, string> = {
 	starship:
 		"Choose whether footer runtime/git/context colors use Pi theme tokens or terminal palette styles.",
 	editorMessages:
-		"Choose whether editor and previous user-message borders/rails use Pi theme colors or terminal palette styles.",
+		"Choose Pi theme colors or terminal styles for editor chrome and message rails. Sakura gradient borders are preserved.",
 };
 
 const featureSettingLabels: Record<FeatureSettingId, string> = {

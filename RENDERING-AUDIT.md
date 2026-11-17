@@ -17,12 +17,12 @@
 | Bash 仍显示 `$` 且整行浅蓝 | 这是 Pi 原生 `renderCall` 和 `toolTitle` 的行为。使用公开 `registerToolRenderer` 仅装饰命令头，改为 `❯`，复用 `highlightCode` 的 Shell 语法。 | `extensions/zentui/shell-call.ts` |
 | 长命令占屏、续行层级不清 | 加悬挂缩进、五个视觉行的折叠预览及单行展开提示；展开后显示完整命令。原始脚本的物理换行保留，不为了美观改写 Shell 语法。 | 同上 |
 | 长命令重绘开销大 | 复核时 20 万字符单行的重复渲染约 309–449ms；增加内容/主题/宽度/展开态/timeout/按键提示缓存，复核相同输入重绘低于 0.1ms。首次高亮仍有成本。 | 同上 |
-| 状态颜色不跟随主题 | 工具卡原来接收 theme getter 却不用，状态轨道全为固定 RGB。状态文字和轨道现在使用 `toolTitle` / `success` / `error`；主题颜色进入缓存键。品牌边框仍保留 Sakura 渐变。 | `tool-execution.ts` |
+| 状态颜色不跟随主题 | 工具卡原来接收 theme getter 却不用，状态轨道全为固定 RGB。1.5.0 让状态文字和轨道使用 `toolTitle` / `success` / `error`。1.5.1 按视觉要求改为整行标题（含边框、状态字和 diff 计数）一次计算 Sakura 渐变，避免短边框重启渐变变蓝；语义主题色仅保留在轨道，仍进入缓存键。 | `tool-execution.ts` |
 | 无边框编辑器丢首尾行 | 原回退分支无条件 `slice(1, -1)`。只剥离有标记证据的边框；纯文本水平线也保留，不能靠长得像边框就删除。 | `ui.ts` |
 | 编辑器点击位置、补全命中错位 | 显示层增加轨道、空行和元数据，却未映射鼠标坐标。保存逐行映射，分别转换正文/补全位置，忽略 chrome。 | 同上 |
 | 包装后的编辑器失去分页/拖拽结束事件 | 转发 `capturesViewportInput`，并保存捕获手势的坐标变换，使拖拽/释放落在边框外时仍送达内部编辑器。没有依赖未从公共入口导出的鼠标 dispatcher。 | 同上 |
 | `NO_COLOR` 漏色 | 共享 theme 颜色辅助函数和由宿主着色的展开提示可能绕过本包颜色模式。现在本包产生的颜色遵循关闭状态；不剥除 Pi 自己的结果正文颜色。 | `style.ts`、`shell-call.ts` |
-| 用户消息颜色来源设置无效 | `colorSources.userMessages` 未使用，缓存也不含解析后的样式。现在 theme 模式取主题边框/强调色，terminal 模式保留品牌色，切换后重绘。 | `user-message.ts` |
+| 用户消息颜色来源设置无效 | `colorSources.userMessages` 未使用，缓存也不含解析后的样式。1.5.0 让 theme 模式使用主题边框/强调色，但随后确认默认 `borderMuted` 会使发送后的渐变边框变暗。1.5.1 保留品牌渐变边框，颜色来源只影响轨道，并继续在切换后重绘。 | `user-message.ts` |
 | diff 统计漏计 `+++` / `---` 内容 | 原实现把所有此类行都当文件头。现在根据 unified diff 的 hunk 位置及行计数区分文件头与改动内容；Pi 的带行号 display diff 继续支持。 | `tool-execution.ts` |
 | 最新 Pi 的主题测试实际没跑 | 仍只找旧 schema 路径。先查 `schemas/theme.schema.json`，再回退旧路径；宿主已安装却无 schema 时失败而非静默跳过。 | `test/theme.test.ts` |
 | 旧版主题 schema 不兼容 | 实际安装 Pi 0.87.1 后，证实它不接受可选的 `appearance` 顶层键。移除此键，不提高最低支持版本；新 Pi 可推断暗色外观。 | `themes/sakura-macaron.json` |
@@ -33,7 +33,7 @@
 
 应区分三种信息，不要混成一个“红色失败状态”：
 
-1. **工具执行状态**：只有 Pi 的 `result.isError` 决定 `FAILED`，不是 stderr、退出提示里的某个词或正文是否包含 `Error`。状态字和轨道跟随主题语义色。
+1. **工具执行状态**：只有 Pi 的 `result.isError` 决定 `FAILED`，不是 stderr、退出提示里的某个词或正文是否包含 `Error`。状态通过符号和文字表达；轨道跟随主题语义色，整行标题保持连续 Sakura 渐变。
 2. **结构化通知**：`ctx.ui.notify(..., "warning" | "error")`、原生截断警告和完整输出链接继续由 Pi 渲染；主题中的 `warning`（本主题 butter）和 `error`（coral）已经定义。
 3. **任意日志正文**：可能是源码、测试样例、JSON、转义序列或程序自己的 ANSI。默认不扫描 `warning` / `error` 子串，不把整段输出重新染色，也不把程序已有的颜色覆盖掉。
 
