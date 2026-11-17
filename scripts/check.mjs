@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { access, readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { stripTypeScriptTypes } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -22,6 +23,17 @@ for (const name of Object.keys(manifest.dependencies ?? {})) {
 assert.deepEqual(Object.keys(manifest.dependencies ?? {}), [], "the pack ships without runtime dependencies");
 assert.equal(manifest.devDependencies, undefined, "dev tooling lives in .dev/ (npm run dev:setup)");
 
+// The suite must run on Node with type stripping only (Node 26 removed
+// --experimental-transform-types), so no TS runtime-only syntax is allowed.
+assert.ok(
+	!manifest.scripts.test.includes("experimental-transform-types"),
+	"test script must not rely on the removed --experimental-transform-types flag",
+);
+function assertErasableTypes(file, source) {
+	// Node parses without executing: catches parameter properties anywhere, enums and namespaces too.
+	assert.doesNotThrow(() => stripTypeScriptTypes(source, { mode: "strip" }), `${file}: unsupported Node type-stripping syntax`);
+}
+
 // Every declared resource exists; removed components stay removed.
 for (const path of [...manifest.pi.extensions, ...manifest.pi.themes]) assert.ok(await exists(path), `missing ${path}`);
 assert.equal(manifest.pi.extensions.some((path) => path.includes("dual-quota")), false);
@@ -40,10 +52,14 @@ async function listTs(dir) {
 }
 for (const file of await listTs("extensions")) {
 	const source = await read(file);
+	assertErasableTypes(file, source);
 	for (const [, spec] of source.matchAll(/from\s+"([^".][^"]*)"/g)) {
 		if (spec.startsWith("node:")) continue;
 		assert.ok(spec in (manifest.peerDependencies ?? {}), `${file} imports undeclared package ${spec}`);
 	}
+}
+for (const file of await listTs("test")) {
+	assertErasableTypes(file, await read(file));
 }
 
 // Shipped files: runtime resources + docs only.

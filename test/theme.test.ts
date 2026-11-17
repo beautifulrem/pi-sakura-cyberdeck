@@ -3,10 +3,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 
 const THEME_URL = new URL("../themes/sakura-macaron.json", import.meta.url);
-const SCHEMA_PATH = "dist/modes/interactive/theme/theme-schema.json";
+const SCHEMA_PATHS = ["schemas/theme.schema.json", "dist/modes/interactive/theme/theme-schema.json"];
 const SCHEMAS = [
-  { label: "Pi 0.99.1 (.dev)", url: new URL(`../.dev/node_modules/@earendil-works/pi-coding-agent/${SCHEMA_PATH}`, import.meta.url) },
-  { label: "Pi 0.87.1 (/tmp/pi-compat-087)", url: new URL(`file:///tmp/pi-compat-087/node_modules/@earendil-works/pi-coding-agent/${SCHEMA_PATH}`) },
+  { label: "installed Pi (.dev)", root: new URL("../.dev/node_modules/@earendil-works/pi-coding-agent/", import.meta.url) },
+  { label: "Pi 0.87.1 (/tmp/pi-compat-087)", root: new URL("file:///tmp/pi-compat-087/node_modules/@earendil-works/pi-coding-agent/") },
 ];
 const PACK_BG = "#14111A";
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
@@ -67,12 +67,14 @@ function validate(schema: Schema): void {
   }
 }
 
-for (const { label, url } of SCHEMAS) {
+for (const { label, root } of SCHEMAS) {
   test(`theme validates against ${label} schema`, (t) => {
-    if (!existsSync(url)) {
-      t.skip(`schema not found at ${url.pathname}`);
+    if (!existsSync(new URL("package.json", root))) {
+      t.skip(`host not installed at ${root.pathname}`);
       return;
     }
+    const url = SCHEMA_PATHS.map((path) => new URL(path, root)).find(existsSync);
+    assert.ok(url, `installed host ${label} must supply a theme schema`);
     validate(JSON.parse(readFileSync(url, "utf8")) as Schema);
   });
 }

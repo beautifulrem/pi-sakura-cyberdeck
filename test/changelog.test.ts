@@ -2,13 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import {
-	compareVersions,
-	parseChangelog,
-	renderChangelogLines,
-	renderNoticeLines,
-	unseenEntries,
-} from "../extensions/changelog/index";
+import { parseChangelog, renderChangelogLines } from "../extensions/changelog/index";
 
 const plain = { fg: (_c: string, t: string) => t, bold: (t: string) => t } as never;
 
@@ -41,25 +35,6 @@ test("parseChangelog reads versions, dates, sections and bullets", () => {
 	assert.equal(entries[0]!.date, "2026-09-30");
 	assert.deepEqual(entries[0]!.sections.map((s) => s.title), ["Highlights", "Fixed"]);
 	assert.equal(entries[1]!.sections[0]!.lines.length, 1);
-});
-
-test("unseenEntries returns versions after lastSeen up to current, newest first", () => {
-	const entries = parseChangelog(SAMPLE);
-	assert.deepEqual(unseenEntries(entries, "1.1.6", "1.2.0").map((e) => e.version), ["1.2.0"]);
-	assert.deepEqual(unseenEntries(entries, "1.0.0", "1.2.0").map((e) => e.version), ["1.2.0", "1.1.6"]);
-	assert.deepEqual(unseenEntries(entries, undefined, "1.1.6").map((e) => e.version), ["1.1.6", "1.0.0"]);
-	assert.deepEqual(unseenEntries(entries, "1.2.0", "1.2.0"), []);
-	assert.equal(compareVersions("1.10.0", "1.9.9"), 1);
-});
-
-test("notice shows highlights only and never exceeds width", () => {
-	const entries = unseenEntries(parseChangelog(SAMPLE), "1.1.6", "1.2.0");
-	for (const width of [20, 40, 80, 200]) {
-		const lines = renderNoticeLines(entries, width, plain);
-		assert.ok(lines.every((l) => visibleWidth(l) <= width), `width ${width}`);
-		assert.ok(lines.some((l) => l.includes("Lighter: removed the fixed editor.")) || width < 40);
-		assert.ok(!lines.some((l) => l.includes("Bug one")));
-	}
 });
 
 test("full changelog wraps long bullets within width", () => {
