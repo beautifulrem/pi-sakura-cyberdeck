@@ -2,7 +2,7 @@
 
 Lightweight Sakura Macaron visual pack for [Pi](https://pi.dev).
 
-**v1.5.1** — restores Sakura gradient borders on sent prompts and continuous gradients across complete tool-title rows. Includes robust thought trails, `❯` shell headers and theme-aware status rails. See [what changed](#151).
+**v1.5.2** — frames every tool card (image results included), brings back Pi's bash-mode and scroll cues in the Sakura editor frame, and hardens the footer, settings, changelog viewer, matrix rain and shimmer. See [what changed](#152).
 
 ## What’s inside
 
@@ -61,7 +61,7 @@ Other editor extensions (e.g. `pi-fff`) keep their input and autocomplete inside
 - Bash headers use `❯`, not `$`: `❯ cd pi-sakura-cyberdeck && npm run typecheck && npm test (timeout 120s)`
 - Shell headers use Pi's native syntax grammar and active `syntax*` theme colors (keywords/builtins, strings, variables, comments). Long commands wrap with a hanging indent; collapsed cards show five command rows with the configured expand-key hint. Expand for the full command, including multiline scripts. PowerShell keeps its `PS>` prompt and grammar. Requires the public `registerToolRenderer` API; older hosts keep native headers.
 - Warning/error notices, including output-truncation warnings, retain Pi's semantic theme colors. A log containing the word `Error` does **not** turn a successful tool into `FAILED`; only Pi's result status does. Arbitrary output/ANSI colors are not guessed or recolored.
-- `edit` diffs are framed like any other tool card; `!cmd` output and images stay stock Pi
+- `edit` diffs and image results (`read` of a PNG on a vision model, browser screenshots) are framed like any other tool card; terminal image rows only gain the left rail so nothing is drawn over the picture. `!cmd` output stays stock Pi
 - Hidden thinking shows a sakura `✦ Thought` label; visible thinking is compressed into a `✦ Thought trail` digest (`/zentui thinking-trail off` shows Pi's stock rendering)
 
 **Thought trail**
@@ -185,6 +185,17 @@ Avoid stacking with `pi-zentui`, `pi-powerline-footer`, stock `pi-claude-shimmer
 ## Changelog
 
 Full history: [CHANGELOG.md](CHANGELOG.md) (also available in Pi via `/sakura-changelog`).
+
+### 1.5.2
+
+- Tool cards with image results (`read` of a PNG on a vision model, browser screenshots) are framed
+  like every other card; terminal image rows only gain the left rail.
+- The framed editor shows Pi's bash-mode colour while the prompt starts with `!`, and keeps the
+  `↑/↓ N more` scroll labels. Sent prompts keep Pi's OSC 133 prompt markers at line start.
+- Footer: right side (context, tokens, cost) survives narrow terminals; virtual models show context;
+  literal `|` separators keep neighbouring colours; another extension's footer is never removed;
+  fewer git/runtime probes.
+- Settings, `/sakura-changelog`, matrix rain and shimmer fixes. See [CHANGELOG.md](CHANGELOG.md).
 
 ### 1.5.1
 

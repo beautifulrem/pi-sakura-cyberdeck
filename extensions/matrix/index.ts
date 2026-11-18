@@ -188,7 +188,12 @@ export function createDrops(width: number, density: number, height: number): Dro
   const columns = Array.from({ length: Math.ceil(width / 2) }, (_, index) => index * 2);
   const active = columns.filter(() => random() < density);
   const selected = active.length >= 8 ? active : columns.slice(0, Math.min(columns.length, 8));
-  return selected.slice(0, 96).map((x, index) => {
+  // Cap at 96 drops, sampled evenly across the width: keeping the first 96 left the right
+  // side of wide terminals dry. Narrower widths keep exactly the same drops as before.
+  const capped = selected.length > 96
+    ? Array.from({ length: 96 }, (_, index) => selected[Math.floor((index * selected.length) / 96)]!)
+    : selected;
+  return capped.map((x, index) => {
     const length = 3 + Math.floor(random() * 5);
     const gap = 1 + Math.floor(random() * 5);
     const cycle = height + length + gap;
@@ -429,7 +434,13 @@ export default function sakuraMatrixExtension(pi: ExtensionAPI): void {
         case "on":
           config.enabled = true;
           // Takes effect from the next agent run (or immediately when one is running).
-          if (!active && !ctx.isIdle()) start(ctx);
+          if (previewing && !ctx.isIdle()) {
+            // Commands run mid-stream: adopt the running preview as the run's rain so its
+            // 5 s timer cannot stop it. An idle preview still expires on its own.
+            if (previewTimer) clearTimeout(previewTimer);
+            previewTimer = undefined;
+            previewing = false;
+          } else if (!active && !ctx.isIdle()) start(ctx);
           persist(ctx, "Sakura Matrix enabled");
           return;
         case "off":

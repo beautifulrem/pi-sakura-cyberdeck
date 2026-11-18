@@ -53,7 +53,8 @@ async function listTs(dir) {
 for (const file of await listTs("extensions")) {
 	const source = await read(file);
 	assertErasableTypes(file, source);
-	for (const [, spec] of source.matchAll(/from\s+"([^".][^"]*)"/g)) {
+	// `from "pkg"`, side-effect `import "pkg"` and dynamic `import("pkg")`, either quote style.
+	for (const [, , spec] of source.matchAll(/\b(?:from|import)\s*\(?\s*(["'])([^"'.][^"']*)\1/g)) {
 		if (spec.startsWith("node:")) continue;
 		assert.ok(spec in (manifest.peerDependencies ?? {}), `${file} imports undeclared package ${spec}`);
 	}

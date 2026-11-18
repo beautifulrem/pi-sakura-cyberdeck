@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { PolishedTuiConfig, SeparatorStyle } from "./config";
 import { FOOTER_FORMAT_ALIASES } from "./config";
 import {
@@ -100,14 +100,18 @@ function prependStatusArea(base: string, statusText: string, separator: string):
 	return `${statusText}${separator}${base}`;
 }
 
+/**
+ * Built-in left/right that do not fit side by side. The right side (context, tokens, cost) is
+ * the at-a-glance state, so it stays whole and right-aligned; the left is truncated into what
+ * is left after a one-space gap. A right side wider than the line is itself truncated.
+ */
 function composeBuiltInFooterContent(left: string, right: string, innerWidth: number): string {
-	const leftWidth = visibleWidth(left);
+	if (!right) return truncateToWidth(left, innerWidth, "");
 	const rightWidth = visibleWidth(right);
-	return leftWidth >= innerWidth
-		? truncateToWidth(left, innerWidth, "")
-		: leftWidth + 1 + rightWidth <= innerWidth
-			? `${left}${" ".repeat(innerWidth - leftWidth - rightWidth)}${right}`
-			: truncateToWidth(left, innerWidth, "");
+	if (rightWidth >= innerWidth) return truncateToWidth(right, innerWidth, "");
+	const leftText = truncateToWidth(left, Math.max(0, innerWidth - rightWidth - 1), "");
+	// Pad from the truncated left's real width: a wide (CJK) character may stop one column short.
+	return `${leftText}${" ".repeat(innerWidth - visibleWidth(leftText) - rightWidth)}${right}`;
 }
 
 function composeFooterContent(
@@ -191,9 +195,25 @@ export type FooterHooks = {
 	isAgentWorking: () => boolean;
 	/** Receives a callback that re-evaluates the pulse timer (config change / agent state). */
 	setAnimationSync: (fn: (() => void) | undefined) => void;
+	/**
+	 * Pi disposed this footer: Zentui removed it, or another extension's setFooter
+	 * replaced it. Either way it is no longer on screen.
+	 */
+	onDisposed?: () => void;
+	/** The TUI hosting this footer, for whole-screen invalidation (e.g. thought-trail toggles). */
+	onMount?: (tui: TUI) => void;
 };
 
-const FORMAT_GRADIENT_VARS = /\$\{?(?:context|cwd|os)\b/;
+/** Format variables drawn with a phase-tinted gradient, plus every alias that maps to one. */
+const GRADIENT_FORMAT_VARS = ["context", "cwd", "os"];
+const FORMAT_GRADIENT_VARS = new RegExp(
+	`\\$\\{?(?:${[
+		...GRADIENT_FORMAT_VARS,
+		...Object.keys(FOOTER_FORMAT_ALIASES).filter((alias) =>
+			GRADIENT_FORMAT_VARS.includes(FOOTER_FORMAT_ALIASES[alias] ?? ""),
+		),
+	].join("|")})\\b`,
+);
 
 /**
  * The pulse re-renders the whole TUI 4×/s, so it is opt-in
@@ -215,6 +235,7 @@ export function installFooter(
 ): void {
 	ctx.ui.setFooter((tui, theme, footerData) => {
 		hooks.setRequestRender(() => tui.requestRender());
+		hooks.onMount?.(tui);
 		hooks.setExtensionStatusesGetter?.(() => footerData.getExtensionStatuses());
 		const unsubscribeBranch = footerData.onBranchChange(() => {
 			hooks.scheduleProjectRefresh();
@@ -244,6 +265,7 @@ export function installFooter(
 				hooks.setRequestRender(undefined);
 				hooks.setExtensionStatusesGetter?.(undefined);
 				hooks.setAnimationSync(undefined);
+				hooks.onDisposed?.();
 			},
 			invalidate() {},
 			render(width: number): string[] {
@@ -294,7 +316,12 @@ export function installFooter(
 				if (contextCache !== undefined) return contextCache;
 				const contextUsage = getCachedContextUsage(ctx);
 				const liveContext = hooks.getLiveContext?.();
-				const contextWindow = ctx.model?.contextWindow ?? contextUsage?.contextWindow;
+				// Pi sizes context by the routed physical model; a virtual (routed) model itself
+				// reports contextWindow 0, which `??` would keep. Prefer Pi's figure, then a real window.
+				const modelWindow = ctx.model?.contextWindow;
+				const contextWindow =
+					contextUsage?.contextWindow ??
+					(modelWindow !== undefined && modelWindow > 0 ? modelWindow : undefined);
 				const useLiveContext =
 					liveContext !== undefined && contextWindow !== undefined && contextWindow > 0;
 				const contextPercent = useLiveContext
