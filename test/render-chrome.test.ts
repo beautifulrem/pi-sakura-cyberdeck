@@ -304,15 +304,19 @@ test("user message keeps Pi's markdown options, transforms and OSC 133 markers",
 	assert.equal(out.length, inner.length + 2);
 	assert.match(strip(out[0]!), /^─{50}$/);
 	assert.match(strip(out.at(-1)!), /^─{50}$/);
+	const osc133 = /^(?:\x1b\]133;[ABC]\x07)+/;
 	for (let i = 0; i < inner.length; i++) {
-		assert.ok(out[i + 1]!.endsWith(inner[i]!), `inner line ${i} passed through`);
+		// Pi's leading OSC 133 markers move in front of the rail; the rest passes through.
+		const markers = osc133.exec(inner[i]!)?.[0] ?? "";
+		assert.ok(out[i + 1]!.startsWith(markers), `inner line ${i} keeps its prompt markers first`);
+		assert.ok(out[i + 1]!.endsWith(inner[i]!.slice(markers.length)), `inner line ${i} passed through`);
 		assert.equal(strip(out[i + 1]!), `▐ ${strip(inner[i]!)}`);
 	}
 	const plain = out.map(strip).join("\n");
 	assert.ok(plain.includes("1) first"), "ordered list marker preserved");
 	assert.ok(plain.includes("*not emphasis*") || plain.includes("\\*not emphasis\\*"));
-	assert.ok(out[1]!.includes("\x1b]133;A\x07"));
-	assert.ok(out.at(-2)!.includes("\x1b]133;B\x07\x1b]133;C\x07"));
+	assert.ok(out[1]!.startsWith("\x1b]133;A\x07"));
+	assert.ok(out.at(-2)!.startsWith("\x1b]133;B\x07\x1b]133;C\x07"));
 	assert.equal(user.render(width), out, "cached while unchanged");
 });
 
