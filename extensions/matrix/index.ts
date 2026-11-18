@@ -429,7 +429,13 @@ export default function sakuraMatrixExtension(pi: ExtensionAPI): void {
         case "on":
           config.enabled = true;
           // Takes effect from the next agent run (or immediately when one is running).
-          if (!active && !ctx.isIdle()) start(ctx);
+          if (previewing && !ctx.isIdle()) {
+            // Commands run mid-stream: adopt the running preview as the run's rain so its
+            // 5 s timer cannot stop it. An idle preview still expires on its own.
+            if (previewTimer) clearTimeout(previewTimer);
+            previewTimer = undefined;
+            previewing = false;
+          } else if (!active && !ctx.isIdle()) start(ctx);
           persist(ctx, "Sakura Matrix enabled");
           return;
         case "off":
