@@ -16,6 +16,9 @@ once after updating; run `/sakura-changelog` on any supported Pi to read this fi
   inward, so Pi no longer stripped them (stray shell-prompt marks in the terminal) and fullscreen
   previous/next-prompt navigation could not find prompts.
 - The framed editor keeps Pi's `↑ N more` / `↓ N more` scroll labels inside its gradient rule.
+- The framed editor shows Pi's bash-mode cue again: while the text starts with `!` (or `!!`), its
+  rules and rail use the theme's `bashMode` colour, and go back to the Sakura gradient as soon as it
+  does not. The frame used to cover the border colour Pi sets for bash mode.
 - Footer:
   - A literal `|` separator no longer eats the neighbouring segment's colour or reset.
   - Routed (virtual) models show their context usage instead of `--`.
