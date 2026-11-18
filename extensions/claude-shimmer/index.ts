@@ -593,8 +593,11 @@ export default function claudeShimmer(pi: ExtensionAPI) {
     } catch {}
   });
 
-  pi.on("agent_settled", async (_event, ctx) => {
+  pi.on("agent_settled", async (event, ctx) => {
     ctx_ = ctx;
+    // Esc after agent_end (auto-compaction, agent_before_settle work) only shows up here:
+    // Pi 1.5.2 reports it as aborted. Older Pi sends no field, so check strictly.
+    if (runActive && event.aborted === true) runOutcome = "aborted";
     finishRun();
   });
 
