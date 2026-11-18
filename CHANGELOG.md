@@ -3,6 +3,16 @@
 All notable changes to pi-sakura-cyberdeck. Pi >= 1.5.0 shows new package entries
 once after updating; run `/sakura-changelog` on any supported Pi to read this file.
 
+## [Unreleased]
+
+### Fixed
+
+- Tool cards whose results contain images are framed like every other card. Previously any image
+  block skipped the frame, so `read` of a PNG looked different depending on whether the model accepts
+  images (non-vision models never receive the image) and `agent_browser` screenshot results were
+  never framed. Text rows are padded so the right rail lines up; Kitty and iTerm2 image rows only
+  gain the left rail so nothing is drawn over the picture.
+
 ## [1.5.1] - 2026-11-17
 
 ### Highlights

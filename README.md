@@ -61,7 +61,7 @@ Other editor extensions (e.g. `pi-fff`) keep their input and autocomplete inside
 - Bash headers use `❯`, not `$`: `❯ cd pi-sakura-cyberdeck && npm run typecheck && npm test (timeout 120s)`
 - Shell headers use Pi's native syntax grammar and active `syntax*` theme colors (keywords/builtins, strings, variables, comments). Long commands wrap with a hanging indent; collapsed cards show five command rows with the configured expand-key hint. Expand for the full command, including multiline scripts. PowerShell keeps its `PS>` prompt and grammar. Requires the public `registerToolRenderer` API; older hosts keep native headers.
 - Warning/error notices, including output-truncation warnings, retain Pi's semantic theme colors. A log containing the word `Error` does **not** turn a successful tool into `FAILED`; only Pi's result status does. Arbitrary output/ANSI colors are not guessed or recolored.
-- `edit` diffs are framed like any other tool card; `!cmd` output and images stay stock Pi
+- `edit` diffs and image results (`read` of a PNG on a vision model, browser screenshots) are framed like any other tool card; terminal image rows only gain the left rail so nothing is drawn over the picture. `!cmd` output stays stock Pi
 - Hidden thinking shows a sakura `✦ Thought` label; visible thinking is compressed into a `✦ Thought trail` digest (`/zentui thinking-trail off` shows Pi's stock rendering)
 
 **Thought trail**
