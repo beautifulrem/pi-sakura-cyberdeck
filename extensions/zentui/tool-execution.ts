@@ -143,6 +143,24 @@ export function diffStats(diff: string | undefined): DiffStats | undefined {
 	return added || removed ? { added, removed } : undefined;
 }
 
+/**
+ * Diff stats per result object. Pi replaces `result` on every update, so cached frames reuse the
+ * counts without re-parsing a possibly large diff; the stored diff string still guards against a
+ * result whose details were changed in place.
+ */
+const resultStats = new WeakMap<object, { diff: string | undefined; stats: DiffStats | undefined }>();
+
+function statsForResult(result: ToolExecutionRuntime["result"]): DiffStats | undefined {
+	const details = result?.details as { diff?: unknown } | undefined;
+	const diff = typeof details?.diff === "string" ? details.diff : undefined;
+	if (!result || typeof result !== "object") return diffStats(diff);
+	const known = resultStats.get(result);
+	if (known && known.diff === diff) return known.stats;
+	const stats = diffStats(diff);
+	resultStats.set(result, { diff, stats });
+	return stats;
+}
+
 function statsSuffix(stats: DiffStats | undefined): string {
 	if (!stats) return "";
 	const parts: string[] = [];
@@ -257,8 +275,7 @@ export function installToolExecutionStyle(getTheme?: () => Theme | undefined): C
 			const theme = getTheme?.();
 			const role = status === "error" ? "error" : status === "ok" ? "success" : "toolTitle";
 			const statusStyle = theme ? safeThemeFg(theme, role, "x") : "";
-			const details = runtime.result?.details as { diff?: unknown } | undefined;
-			const stats = diffStats(typeof details?.diff === "string" ? details.diff : undefined);
+			const stats = statsForResult(runtime.result);
 			const cached = cards.get(receiver as object);
 			if (
 				cached &&
