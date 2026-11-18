@@ -193,7 +193,16 @@ export type FooterHooks = {
 	setAnimationSync: (fn: (() => void) | undefined) => void;
 };
 
-const FORMAT_GRADIENT_VARS = /\$\{?(?:context|cwd|os)\b/;
+/** Format variables drawn with a phase-tinted gradient, plus every alias that maps to one. */
+const GRADIENT_FORMAT_VARS = ["context", "cwd", "os"];
+const FORMAT_GRADIENT_VARS = new RegExp(
+	`\\$\\{?(?:${[
+		...GRADIENT_FORMAT_VARS,
+		...Object.keys(FOOTER_FORMAT_ALIASES).filter((alias) =>
+			GRADIENT_FORMAT_VARS.includes(FOOTER_FORMAT_ALIASES[alias] ?? ""),
+		),
+	].join("|")})\\b`,
+);
 
 /**
  * The pulse re-renders the whole TUI 4×/s, so it is opt-in

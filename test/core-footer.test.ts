@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { mergeConfig, type PolishedTuiConfig } from "../extensions/zentui/config";
-import { installFooter } from "../extensions/zentui/footer";
+import { footerWantsPulse, installFooter } from "../extensions/zentui/footer";
 import { invalidateSessionCaches } from "../extensions/zentui/format";
 import { emptyGitStatus } from "../extensions/zentui/git";
 import type { LiveContextOverride } from "../extensions/zentui/live-context";
@@ -74,4 +74,16 @@ test("routed virtual models use the context window Pi reports", () => {
 	const model = { provider: "openai", id: "gpt-5", contextWindow: 1000 };
 	assert.equal(renderContext({ model, usage: { tokens: 100, contextWindow: 1000, percent: 10 } }), "10%/1.0k");
 	assert.equal(renderContext({ model, usage: undefined, live: { tokens: 300 } }), "30%/1.0k");
+});
+
+test("footer pulse recognises format aliases of gradient variables", () => {
+	const pulse = (footerFormat: string) =>
+		footerWantsPulse(mergeConfig({ animations: { footerPulse: true }, footerFormat }));
+	assert.equal(pulse("$cwd $tokens"), true);
+	assert.equal(pulse("$directory $tokens"), true, "$directory is an alias of $cwd");
+	assert.equal(pulse("${directory} $tokens"), true);
+	assert.equal(pulse("$context"), true);
+	assert.equal(pulse("$os"), true);
+	assert.equal(pulse("$tokens $cost $directoryx"), false);
+	assert.equal(pulse("$branch $status"), false);
 });
