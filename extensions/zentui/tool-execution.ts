@@ -9,9 +9,10 @@ import { safeThemeFg } from "./style";
  * Tool card chrome: sakura gradient title frame + status rail around Pi's own tool rendering.
  *
  * Body lines are Pi's render output at `width - 3` columns, passed through byte-for-byte: the
- * pack never rewrites, strips or truncates tool output. Hidden cards and image results stay stock
- * (a frame around an image row would be meaningless); `renderShell: "self"` tools such as `edit`
- * are framed like any other.
+ * pack never rewrites, strips or truncates tool output. Only hidden cards stay stock;
+ * `renderShell: "self"` tools such as `edit` and results with images (e.g. `read` of a PNG on
+ * a vision model, browser screenshots) are framed like any other. Terminal image rows are
+ * passed through untouched apart from the left rail (see `railLine`).
  *
  * Why a component hook instead of `pi.registerToolRenderer()`: that API selects a tool's own
  * `renderShell`/`renderCall`/`renderResult`, which draws the *inside* of the tool row. This card
@@ -75,22 +76,43 @@ function toolLabelName(runtime: ToolExecutionRuntime): string {
 	return raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").replaceAll("_", " ").toUpperCase();
 }
 
-function hasImageResult(runtime: ToolExecutionRuntime): boolean {
-	const content = runtime.result?.content;
-	if (!Array.isArray(content)) return false;
-	return content.some((item) => (item as { type?: unknown } | null)?.type === "image");
+// Terminal graphics sequences (same prefixes pi-tui's TUI uses to recognise image rows).
+const KITTY_IMAGE_PREFIX = "\x1b_G";
+const ITERM2_IMAGE_PREFIX = "\x1b]1337;File=";
+
+export function isTerminalImageLine(line: string): boolean {
+	return line.includes(KITTY_IMAGE_PREFIX) || line.includes(ITERM2_IMAGE_PREFIX);
 }
 
 /**
- * Stock rendering only where a frame cannot work: hidden cards and image results.
+ * Stock rendering only where a frame cannot work: hidden cards.
  *
  * `renderShell: "self"` tools (e.g. `edit`, which renders its own diff) are framed too — Pi's
  * self-shell render is `["", ...content]`, which the card's `prefix` handling already accounts
- * for, and the card draws rails rather than a second box.
+ * for, and the card draws rails rather than a second box. Image results are framed as well:
+ * whether Pi draws an image, a text fallback or nothing depends on the model (non-vision models
+ * never get image blocks from `read`) and the terminal, so skipping the frame for them made the
+ * same tool look different from one session to the next.
  */
 function isFrameable(runtime: ToolExecutionRuntime): boolean {
-	if (runtime.hideComponent === true) return false;
-	return !hasImageResult(runtime);
+	return runtime.hideComponent !== true;
+}
+
+/**
+ * One body row inside the rails.
+ *
+ * - Text rows: Pi's line unchanged, padded with spaces only when it is shorter than the inner
+ *   width (Pi's Box rows already fill it; image spacers and image placeholder rows are `""`), so
+ *   the right rail always lines up.
+ * - Terminal image rows: left rail + Pi's line, nothing after it. Kitty draws without moving the
+ *   cursor and iTerm2 rows start with a cursor-up, so any text placed after the sequence would land
+ *   on top of the picture; the image itself is drawn one rail further right, which Pi already
+ *   leaves room for (images are at most `width - 2` cells wide).
+ */
+function railLine(line: string, innerWidth: number, left: string, right: string): string {
+	if (isTerminalImageLine(line)) return `${left}${line}`;
+	const pad = innerWidth - visibleWidth(line);
+	return `${left}${line}${pad > 0 ? " ".repeat(pad) : ""}${right}`;
 }
 
 export type DiffStats = { added: number; removed: number };
@@ -178,7 +200,8 @@ function buildCard(
 	const lines: string[] = inner.slice(0, prefix);
 	// Sample the entire fitted row once: borders, state words and diff counts share one gradient.
 	lines.push(renderSakuraFrameGradient(frameTop(statusText(status, name, stats), width)));
-	for (let i = prefix; i < inner.length; i++) lines.push(`${left}${inner[i]}${right}`);
+	const innerWidth = width - RAIL_COLUMNS;
+	for (let i = prefix; i < inner.length; i++) lines.push(railLine(inner[i]!, innerWidth, left, right));
 	lines.push(renderSakuraFrameGradient(frameBottom(width)));
 	return { lines, prefix };
 }
