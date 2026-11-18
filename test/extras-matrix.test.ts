@@ -7,7 +7,7 @@ import { after, afterEach, beforeEach, mock, test } from "node:test";
 // "/sakura-matrix on" persists the config: keep it out of the suite's shared agent dir.
 const agentDir = mkdtempSync(join(tmpdir(), "sakura-matrix-extras-"));
 process.env.PI_CODING_AGENT_DIR = agentDir;
-const { default: matrix } = await import("../extensions/matrix/index");
+const { default: matrix, createDrops } = await import("../extensions/matrix/index");
 after(() => rmSync(agentDir, { recursive: true, force: true }));
 
 function harness(idle: boolean) {
@@ -58,4 +58,12 @@ test("'on' while idle still lets a preview expire", async () => {
 	assert.equal(h.widgets.at(-1), "off");
 	await h.emit("session_shutdown");
 	await h.run("off");
+});
+
+test("wide terminals rain across the full width, not only the left 96 columns", () => {
+	const drops = createDrops(240, 0.95, 4);
+	const xs = drops.map((drop) => drop.x);
+	assert.ok(xs.length <= 96);
+	assert.ok(Math.max(...xs) >= 230, `rightmost drop at x=${Math.max(...xs)}`);
+	assert.ok(xs.every((x, i) => i === 0 || x > xs[i - 1]!), "columns stay ordered and distinct");
 });
