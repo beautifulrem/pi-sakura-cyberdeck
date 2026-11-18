@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 const GIT_COMMAND_TIMEOUT_MS = 3_000;
 const GIT_MAX_BUFFER = 16 * 1024 * 1024;
@@ -262,6 +262,22 @@ function isNotARepoError(error: unknown): boolean {
 	return /not a git repository|outside repository|not a git repo/i.test(message);
 }
 
+/**
+ * Cheap hint (stat calls only) for whether `cwd` is inside a git work tree: a
+ * `.git` entry in it or an ancestor, or `GIT_DIR` set. It never decides the
+ * result, only whether probes may start before `rev-parse` confirms the repo.
+ */
+function looksLikeGitWorkTree(cwd: string): boolean {
+	if (process.env.GIT_DIR) return true;
+	let dir = resolve(cwd);
+	for (;;) {
+		if (existsSync(join(dir, ".git"))) return true;
+		const parent = dirname(dir);
+		if (parent === dir) return false;
+		dir = parent;
+	}
+}
+
 let showStashSupport: Promise<boolean> | undefined;
 
 /** `--show-stash` emits `# stash N` in porcelain v2 from git 2.35 on. Checked once per process. */
@@ -304,34 +320,42 @@ export async function readGitStatus(
 	const numstatArgs = ["diff", "HEAD", "--numstat"];
 	if (options.ignoreSubmodules) numstatArgs.push("--ignore-submodules=all");
 
-	// rev-parse doubles as the "is this a repo" check when nothing else runs.
-	const gitDirPromise = runGit(cwd, ["rev-parse", "--git-dir"]);
 	type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown };
-	// Settle eagerly so a failure that lands while we await rev-parse is never "unhandled".
-	const statusPromise: Promise<Settled<GitStatusSummary>> | undefined = readStatus
-		? supportsShowStash(cwd).then(async (showStash) => {
-				const args = ["status", "--porcelain=2", "--branch"];
-				if (showStash) args.push("--show-stash");
-				const [statusOut, stashOut] = await Promise.all([
-					runGit(cwd, args),
-					showStash ? Promise.resolve("") : runGit(cwd, ["stash", "list"]).catch(() => ""),
-				]);
-				const stashCount = stashOut.split(/\r?\n/).filter((line) => line.trim()).length;
-				return parseGitStatusPorcelain(statusOut, stashCount);
-			}).then(
-				(value): Settled<GitStatusSummary> => ({ ok: true, value }),
-				(error: unknown): Settled<GitStatusSummary> => ({ ok: false, error }),
-			)
-		: undefined;
-	const tagPromise = readExactTag
-		? runGit(cwd, ["describe", "--tags", "--exact-match", "HEAD"]).then(
-				(out) => out.trim() || null,
-				() => null,
-			)
-		: Promise.resolve(null);
-	const metricsPromise = readMetrics
-		? runGit(cwd, numstatArgs).then(parseGitNumstat, () => null)
-		: Promise.resolve(undefined);
+	const startProbes = () => ({
+		// Settle eagerly so a failure that lands while we await rev-parse is never "unhandled".
+		status: readStatus
+			? supportsShowStash(cwd)
+					.then(async (showStash) => {
+						const args = ["status", "--porcelain=2", "--branch"];
+						if (showStash) args.push("--show-stash");
+						const [statusOut, stashOut] = await Promise.all([
+							runGit(cwd, args),
+							showStash ? Promise.resolve("") : runGit(cwd, ["stash", "list"]).catch(() => ""),
+						]);
+						const stashCount = stashOut.split(/\r?\n/).filter((line) => line.trim()).length;
+						return parseGitStatusPorcelain(statusOut, stashCount);
+					})
+					.then(
+						(value): Settled<GitStatusSummary> => ({ ok: true, value }),
+						(error: unknown): Settled<GitStatusSummary> => ({ ok: false, error }),
+					)
+			: undefined,
+		tag: readExactTag
+			? runGit(cwd, ["describe", "--tags", "--exact-match", "HEAD"]).then(
+					(out) => out.trim() || null,
+					() => null,
+				)
+			: Promise.resolve(null),
+		metrics: readMetrics
+			? runGit(cwd, numstatArgs).then(parseGitNumstat, () => null)
+			: Promise.resolve(undefined),
+	});
+
+	// rev-parse is the "is this a repo" check. Inside a likely work tree the other
+	// probes start alongside it (one round-trip per refresh); elsewhere they wait
+	// for it, so a refresh outside any repo spawns one failing git, not up to four.
+	const gitDirPromise = runGit(cwd, ["rev-parse", "--git-dir"]);
+	let probes = looksLikeGitWorkTree(cwd) ? startProbes() : undefined;
 
 	let gitDir: string;
 	try {
@@ -340,9 +364,11 @@ export async function readGitStatus(
 		gitDir = isAbsolute(out) ? out : resolve(cwd, out);
 	} catch (error) {
 		// Let the other probes settle quietly before returning.
-		await Promise.allSettled([statusPromise, tagPromise, metricsPromise]);
+		if (probes) await Promise.allSettled([probes.status, probes.tag, probes.metrics]);
 		return isNotARepoError(error) ? { kind: "not_a_repo" } : { kind: "error" };
 	}
+	probes ??= startProbes();
+	const { status: statusPromise, tag: tagPromise, metrics: metricsPromise } = probes;
 
 	let status = emptyGitStatus();
 	if (statusPromise) {
