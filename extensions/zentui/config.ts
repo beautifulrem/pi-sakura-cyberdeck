@@ -548,17 +548,22 @@ export function isExtensionStatusColorMode(value: unknown): value is ExtensionSt
 }
 
 function normalizeExtensionStatuses(record: Record<string, unknown>): ExtensionStatusesConfig {
+	const explicitDefault = isExtensionStatusPlacement(record.defaultPlacement);
 	const defaultPlacement = isExtensionStatusPlacement(record.defaultPlacement)
 		? record.defaultPlacement
 		: "right";
-	const placements = nullProtoRecord(
-		isRecord(record.placements)
+	const placements = nullProtoRecord([
+		// Built-in per-key placements sit under the user's own. Zentui's saves write this
+		// section without `defaultPlacement`, so saving one status must not move codex-goal
+		// to the right; a hand-written `defaultPlacement` is a global choice and still wins.
+		...(explicitDefault ? [] : Object.entries(DEFAULT_EXTENSION_PLACEMENTS)),
+		...(isRecord(record.placements)
 			? Object.entries(record.placements).filter(
 					(entry): entry is [string, ExtensionStatusPlacement] =>
 						isExtensionStatusPlacement(entry[1]),
 				)
-			: [],
-	);
+			: []),
+	]);
 	const colorModes = nullProtoRecord(
 		isRecord(record.colorModes)
 			? Object.entries(record.colorModes).filter(
