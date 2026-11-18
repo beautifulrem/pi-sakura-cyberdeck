@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { stripVTControlCharacters, } from "node:util";
+import { stripVTControlCharacters } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { getColorMode, setColorMode } from "../extensions/shared/color";
 import { defaultConfig, mergeConfig } from "../extensions/zentui/config";
 import { PolishedEditor, WrappedPolishedEditor } from "../extensions/zentui/ui";
 
@@ -63,6 +64,21 @@ test("wrapped editors keep ↑/↓ scroll labels in the frame rule", () => {
 		assert.match(plain.at(-1)!, new RegExp(`^─+ ${bottom} ─+$`));
 		assert.equal(visibleWidth(lines[0]!), 50);
 		assert.equal(visibleWidth(lines.at(-1)!), 50);
+	}
+	// The label goes through the Sakura gradient painter in every colour mode without changing width.
+	const previous = getColorMode();
+	try {
+		for (const mode of ["truecolor", "256color", "none"] as const) {
+			setColorMode(mode);
+			const editor = new WrappedPolishedEditor(scrollingBase("↑ 2 more", "↓ 7 more") as never, uiTheme, () => defaultConfig, meta, () => "off");
+			const lines = editor.render(50);
+			assert.match(stripVTControlCharacters(lines[0]!), /^─+ ↑ 2 more ─+$/, mode);
+			assert.equal(visibleWidth(lines[0]!), 50, mode);
+			assert.equal(visibleWidth(lines.at(-1)!), 50, mode);
+			if (mode !== "none") assert.ok(lines[0]!.includes("\x1b[38;"), `${mode}: gradient painted`);
+		}
+	} finally {
+		setColorMode(previous);
 	}
 	// Unmarked rows that merely look like an indicator are body content, never a label source.
 	const lookalike = scrollingBase("", "");
