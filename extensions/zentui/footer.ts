@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { PolishedTuiConfig, SeparatorStyle } from "./config";
 import { FOOTER_FORMAT_ALIASES } from "./config";
 import {
@@ -196,6 +196,8 @@ export type FooterHooks = {
 	 * replaced it. Either way it is no longer on screen.
 	 */
 	onDisposed?: () => void;
+	/** The TUI hosting this footer, for whole-screen invalidation (e.g. thought-trail toggles). */
+	onMount?: (tui: TUI) => void;
 };
 
 /** Format variables drawn with a phase-tinted gradient, plus every alias that maps to one. */
@@ -229,6 +231,7 @@ export function installFooter(
 ): void {
 	ctx.ui.setFooter((tui, theme, footerData) => {
 		hooks.setRequestRender(() => tui.requestRender());
+		hooks.onMount?.(tui);
 		hooks.setExtensionStatusesGetter?.(() => footerData.getExtensionStatuses());
 		const unsubscribeBranch = footerData.onBranchChange(() => {
 			hooks.scheduleProjectRefresh();

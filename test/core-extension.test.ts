@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { stripVTControlCharacters } from "node:util";
 
 // config.ts resolves its path at import time: point it at a scratch agent dir first.
 const agentDir = mkdtempSync(join(tmpdir(), "zentui-core-agent-"));
@@ -60,6 +61,7 @@ function makeCtx(mode = "tui") {
 	let footer: FooterComponent | undefined;
 	let editorFactory: unknown;
 	let trustChecks = 0;
+	const panel: { component?: { handleInput(data: string): void } } = {};
 	const theme = { fg: (_c: string, t: string) => t, bold: (t: string) => t, getColorMode: () => "256color" };
 	const ctx = {
 		mode,
@@ -89,10 +91,19 @@ function makeCtx(mode = "tui") {
 				editorFactory = factory;
 			},
 			getEditorComponent: () => editorFactory,
+			custom(factory: (...args: unknown[]) => { handleInput(data: string): void }) {
+				return new Promise<void>((resolve) => {
+					panel.component = factory(tuiHandle, theme, {}, () => {
+						panel.component = undefined;
+						resolve();
+					});
+				});
+			},
 		},
 	};
 	return {
 		ctx,
+		panel,
 		tui,
 		notices,
 		trustChecks: () => trustChecks,
@@ -194,5 +205,70 @@ test("a session restart keeps the new footer live after disposing the old one", 
 		assert.equal(session.trustChecks(), checks + 1, "the new footer still drives project refreshes");
 	} finally {
 		await emit("session_shutdown", {}, session.ctx);
+	}
+});
+
+async function thinkingMarkdown(transformer: Transformer | undefined) {
+	const { getMarkdownTheme, initTheme } = await import("@earendil-works/pi-coding-agent");
+	const { Markdown } = await import("@earendil-works/pi-tui");
+	initTheme("dark");
+	assert.ok(transformer, "thought-trail transformer registered");
+	// Pi wires markdown transformers into its real Markdown component exactly like this.
+	const markdown = new Markdown("Step one.\n\nStep two.", 0, 0, getMarkdownTheme(), undefined, {
+		transform: (text, availableWidth) =>
+			transformer(text, { messageType: "assistant-thinking", availableWidth }),
+	});
+	const render = () => stripVTControlCharacters(markdown.render(80).join("\n"));
+	return { markdown, render };
+}
+
+test("toggling the thought trail re-renders already displayed thinking", async () => {
+	writeFileSync(configFile, "{}");
+	const { emit, run, transformers } = await setup();
+	const session = makeCtx();
+	try {
+		await emit("session_start", {}, session.ctx);
+		const { markdown, render } = await thinkingMarkdown(transformers[0]);
+		session.tui.onInvalidate = () => markdown.invalidate();
+		assert.match(render(), /Thought trail/);
+
+		const invalidations = session.tui.invalidations;
+		await run("copy-friendly toggle", session.ctx);
+		assert.equal(session.tui.invalidations, invalidations, "unrelated settings keep caches");
+
+		await run("thinking toggle", session.ctx);
+		assert.doesNotMatch(render(), /Thought trail/, "the cached trail is dropped");
+		assert.match(render(), /Step one\./);
+		await run("thinking toggle", session.ctx);
+		assert.match(render(), /Thought trail/);
+	} finally {
+		await emit("session_shutdown", {}, session.ctx);
+		writeFileSync(configFile, "{}");
+	}
+});
+
+test("the settings panel re-renders thinking even with no footer or editor", async () => {
+	writeFileSync(configFile, JSON.stringify({ features: { editor: false, statusLine: false } }));
+	const { emit, run, transformers } = await setup();
+	const session = makeCtx();
+	try {
+		await emit("session_start", {}, session.ctx);
+		const { markdown, render } = await thinkingMarkdown(transformers[0]);
+		session.tui.onInvalidate = () => markdown.invalidate();
+		assert.match(render(), /Thought trail/);
+
+		const closed = run("", session.ctx);
+		const panel = session.panel.component;
+		assert.ok(panel, "settings panel open");
+		panel.handleInput("\t"); // Coloring -> Features
+		for (let i = 0; i < 3; i++) panel.handleInput("\x1b[B"); // editor, status line, messages -> trail
+		panel.handleInput(" ");
+		assert.equal(JSON.parse(readFileSync(configFile, "utf8")).features.thinkingTrail, false);
+		assert.doesNotMatch(render(), /Thought trail/, "the cached trail is dropped");
+		panel.handleInput("\x1b");
+		await closed;
+	} finally {
+		await emit("session_shutdown", {}, session.ctx);
+		writeFileSync(configFile, "{}");
 	}
 });

@@ -115,6 +115,8 @@ export default function (pi: ExtensionAPI) {
 	let probePlan: { version: number; plan: ProjectProbePlan } | undefined;
 	let activeCtx: ExtensionContext | undefined;
 	let activeTheme: Theme | undefined;
+	/** Pi's TUI, as seen by our footer or editor factory; needed to drop cached renders. */
+	let activeTui: Pick<TUI, "invalidate" | "requestRender"> | undefined;
 	let requestFooterRender: (() => void) | undefined;
 	let syncFooterAnimation: (() => void) | undefined;
 	let getActiveExtensionStatuses: () => ReadonlyMap<string, string> = () => new Map();
@@ -292,8 +294,9 @@ export default function (pi: ExtensionAPI) {
 
 	const makeEditorFactory = (ctx: ExtensionContext): ZentuiEditorFactory => {
 		const sessionTheme = ctx.ui.theme;
-		const factory = ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) =>
-			new PolishedEditor(
+		const factory = ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => {
+			activeTui = tui;
+			return new PolishedEditor(
 				tui,
 				theme,
 				keybindings,
@@ -301,7 +304,8 @@ export default function (pi: ExtensionAPI) {
 				getCurrentConfig,
 				editorMeta,
 				getThinkingLevel,
-			)) as ZentuiEditorFactory;
+			);
+		}) as ZentuiEditorFactory;
 		factory[ZENTUI_EDITOR_FACTORY] = true;
 		return factory;
 	};
@@ -311,14 +315,16 @@ export default function (pi: ExtensionAPI) {
 		baseFactory: EditorFactory,
 	): ZentuiEditorFactory => {
 		const sessionTheme = ctx.ui.theme;
-		const factory = ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) =>
-			new WrappedPolishedEditor(
+		const factory = ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => {
+			activeTui = tui;
+			return new WrappedPolishedEditor(
 				baseFactory(tui, theme, keybindings),
 				sessionTheme,
 				getCurrentConfig,
 				editorMeta,
 				getThinkingLevel,
-			)) as ZentuiEditorFactory;
+			);
+		}) as ZentuiEditorFactory;
 		factory[ZENTUI_EDITOR_FACTORY] = true;
 		factory[ZENTUI_EDITOR_BASE_FACTORY] = baseFactory;
 		return factory;
@@ -390,6 +396,9 @@ export default function (pi: ExtensionAPI) {
 				getActiveExtensionStatuses = fn ?? (() => new Map());
 			},
 			getLiveContext: () => liveContext.get(),
+			onMount: (tui) => {
+				activeTui = tui;
+			},
 			isAgentWorking: () => agentWorking && !uiPromptActive,
 			setAnimationSync: (fn) => {
 				syncFooterAnimation = fn;
@@ -555,6 +564,7 @@ export default function (pi: ExtensionAPI) {
 			footerInstalled = false;
 			editorInstalled = false;
 			activeTheme = undefined;
+			activeTui = undefined;
 			activeCtx = undefined;
 			requestFooterRender = undefined;
 		}
@@ -586,8 +596,15 @@ export default function (pi: ExtensionAPI) {
 			applyConfig(saveColorSourcesPatch(patch));
 		},
 		setUiFeatures(patch: Partial<UiFeaturesConfig>, ctx: ExtensionContext) {
+			const thinkingTrail = currentConfig.features.thinkingTrail;
 			applyConfig(saveUiFeaturesPatch(patch));
 			const result = applyConfiguredUi(ctx);
+			// Pi's Markdown caches lines by text+width and re-runs transformers only on a miss:
+			// displayed thinking keeps its old form unless every component is invalidated.
+			if (currentConfig.features.thinkingTrail !== thinkingTrail && sessionLifecycle.isCurrent()) {
+				activeTui?.invalidate();
+				activeTui?.requestRender();
+			}
 			return {
 				applied: !(patch.editor !== undefined && result.editorBlocked),
 				reason: result.editorBlocked
