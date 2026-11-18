@@ -11,7 +11,8 @@ import { safeThemeFg } from "./style";
  *
  * The message body is Pi's own UserMessageComponent render (markdown options, extension
  * markdown transformers, outputPad, OSC 133 prompt markers) at the reduced width, passed through
- * byte-for-byte. Copy-friendly mode drops the rail so copied text has no extra glyphs.
+ * byte-for-byte except that leading OSC 133 markers stay in front of the rail (see `railLine`).
+ * Copy-friendly mode drops the rail so copied text has no extra glyphs.
  */
 
 type Cleanup = () => void;
