@@ -21,6 +21,10 @@ once after updating; run `/sakura-changelog` on any supported Pi to read this fi
   does not. The frame used to cover the border colour Pi sets for bash mode.
 - Footer:
   - A literal `|` separator no longer eats the neighbouring segment's colour or reset.
+  - Narrow terminals keep the right side (context, tokens, cost) whole and truncate the left side
+    into the remaining space; a right side wider than the terminal is truncated instead of hidden.
+    Previously the right side vanished, and a right-only `footerFormat` such as
+    `$fill$context $tokens $cost` rendered blank at 25 columns.
   - Routed (virtual) models show their context usage instead of `--`.
   - `$directory` pulses like `$cwd`.
   - When another extension replaces the footer, Zentui stops its timers and git/runtime probes and no
