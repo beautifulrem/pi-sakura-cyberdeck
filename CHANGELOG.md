@@ -12,6 +12,44 @@ once after updating; run `/sakura-changelog` on any supported Pi to read this fi
   images (non-vision models never receive the image) and `agent_browser` screenshot results were
   never framed. Text rows are padded so the right rail lines up; Kitty and iTerm2 image rows only
   gain the left rail so nothing is drawn over the picture.
+- Sent prompts keep Pi's OSC 133 prompt markers at the start of the line. The rail used to push them
+  inward, so Pi no longer stripped them (stray shell-prompt marks in the terminal) and fullscreen
+  previous/next-prompt navigation could not find prompts.
+- The framed editor keeps Pi's `↑ N more` / `↓ N more` scroll labels inside its gradient rule.
+- Footer:
+  - A literal `|` separator no longer eats the neighbouring segment's colour or reset.
+  - Routed (virtual) models show their context usage instead of `--`.
+  - `$directory` pulses like `$cwd`.
+  - When another extension replaces the footer, Zentui stops its timers and git/runtime probes and no
+    longer removes the other footer on `statusline disable` or shutdown. Only session start and an
+    explicit `/zentui statusline enable` install the Zentui footer again.
+  - A failed or timed-out runtime version check is retried after 30 s instead of being cached for
+    the whole process.
+  - Outside a git repository a refresh runs one `git rev-parse` instead of up to four failing git
+    processes; a forced refresh requested during another refresh no longer waits for the throttle;
+    settings that cannot change the probes no longer force a rescan.
+- Settings:
+  - Turning the editor off in a fresh config no longer turns message styling off with it.
+  - Saving one extension-status setting keeps the built-in placements of the others (e.g.
+    `codex-goal` stays in the middle) unless the file sets `defaultPlacement`.
+  - Toggling the Thought trail re-renders thinking blocks already on screen.
+  - `/zentui` commands outside the TUI (RPC, print) start from the saved config, not defaults.
+  - `scrollbarTrack`, `scrollbarThumb` and `searchMatchText` are accepted as colour tokens.
+- `/sakura-changelog`: no blank page after widening the terminal; hard-wrapped bullets reflow with a
+  hanging indent; inline code spans close correctly.
+- Matrix rain: `on` during a running preview keeps the rain for the rest of the run; wide terminals
+  rain across the full width.
+- Shimmer: pressing Esc after the answer (during compaction or other post-run work) no longer shows a
+  success notice.
+- Edit-card diff counts are computed once per result instead of on every frame.
+- 1.5.0's release date is corrected to 2026-11-17.
+
+### Development
+
+- The test harness points `PI_CODING_AGENT_DIR` at a temp directory, so tests never read or write
+  the developer's `~/.pi/agent` config.
+- `scripts/check.mjs` also catches side-effect, dynamic and single-quoted imports of undeclared
+  packages.
 
 ## [1.5.1] - 2026-11-17
 
