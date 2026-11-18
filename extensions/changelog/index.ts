@@ -167,8 +167,12 @@ class ChangelogViewer implements Component {
 		return Math.max(5, Math.min(40, this.rows() - 8));
 	}
 
+	private maxOffset(): number {
+		return Math.max(0, this.cache.length - this.pageSize());
+	}
+
 	handleInput(data: string): void {
-		const max = Math.max(0, this.cache.length - this.pageSize());
+		const max = this.maxOffset();
 		if (matchesKey(data, "escape") || data === "q" || matchesKey(data, "return")) {
 			this.done();
 			return;
@@ -188,6 +192,9 @@ class ChangelogViewer implements Component {
 			this.cache = renderChangelogLines(this.entries, width, this.theme);
 			this.lastWidth = width;
 		}
+		// A wider width shortens the text and a taller terminal grows the page, so the offset
+		// a key press clamped earlier can point past the end: clamp again on every render.
+		this.offset = Math.max(0, Math.min(this.maxOffset(), this.offset));
 		const size = this.pageSize();
 		const visible = this.cache.slice(this.offset, this.offset + size);
 		const end = Math.min(this.cache.length, this.offset + size);
