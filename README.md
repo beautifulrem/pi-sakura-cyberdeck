@@ -2,7 +2,7 @@
 
 Lightweight Sakura Macaron visual pack for [Pi](https://pi.dev).
 
-**v1.5.1** — restores Sakura gradient borders on sent prompts and continuous gradients across complete tool-title rows. Includes robust thought trails, `❯` shell headers and theme-aware status rails. See [what changed](#151).
+**v1.5.2** — frames every tool card (image results included), brings back Pi's bash-mode and scroll cues in the Sakura editor frame, and hardens the footer, settings, changelog viewer, matrix rain and shimmer. See [what changed](#152).
 
 ## What’s inside
 
@@ -185,6 +185,17 @@ Avoid stacking with `pi-zentui`, `pi-powerline-footer`, stock `pi-claude-shimmer
 ## Changelog
 
 Full history: [CHANGELOG.md](CHANGELOG.md) (also available in Pi via `/sakura-changelog`).
+
+### 1.5.2
+
+- Tool cards with image results (`read` of a PNG on a vision model, browser screenshots) are framed
+  like every other card; terminal image rows only gain the left rail.
+- The framed editor shows Pi's bash-mode colour while the prompt starts with `!`, and keeps the
+  `↑/↓ N more` scroll labels. Sent prompts keep Pi's OSC 133 prompt markers at line start.
+- Footer: right side (context, tokens, cost) survives narrow terminals; virtual models show context;
+  literal `|` separators keep neighbouring colours; another extension's footer is never removed;
+  fewer git/runtime probes.
+- Settings, `/sakura-changelog`, matrix rain and shimmer fixes. See [CHANGELOG.md](CHANGELOG.md).
 
 ### 1.5.1
 
