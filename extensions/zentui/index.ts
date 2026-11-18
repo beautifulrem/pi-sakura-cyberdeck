@@ -429,6 +429,7 @@ export default function (pi: ExtensionAPI) {
 
 	/** Adopt a new config: re-plan probes/timers/animation and repaint immediately. */
 	const applyConfig = (next: PolishedTuiConfig) => {
+		const previousPlan = getProbePlan();
 		currentConfig = next;
 		configVersion += 1;
 		syncFooterAnimation?.();
@@ -436,7 +437,11 @@ export default function (pi: ExtensionAPI) {
 		if (ctx && footerInstalled && sessionLifecycle.isCurrent()) {
 			restartProjectRefreshInterval(ctx);
 			startClockTimer();
-			scheduleProjectRefresh(ctx, { force: true });
+			// Skip the throttle only when the probes themselves changed: cycling e.g. the
+			// separator in /zentui must not spawn git/runtime probes on every key press.
+			if (JSON.stringify(getProbePlan()) !== JSON.stringify(previousPlan)) {
+				scheduleProjectRefresh(ctx, { force: true });
+			}
 		}
 		refresh();
 	};
