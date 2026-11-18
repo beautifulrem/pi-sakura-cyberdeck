@@ -37,7 +37,7 @@ once after updating; run `/sakura-changelog` on any supported Pi to read this fi
 - Added a regression using the shipped Sakura theme and Pi's real `UserMessageComponent`, covering
   both color sources, truecolor/256-color/NO_COLOR, multiple widths, caching and invalidation.
 
-## [1.5.0] - 2026-11-18
+## [1.5.0] - 2026-11-17
 
 Rendering robustness release built against Pi 1.5.2: shell command headers get a `❯` prompt, theme
 syntax colors and an expandable long-command preview, while thought trails stop breaking at inline
