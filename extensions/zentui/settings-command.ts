@@ -101,11 +101,13 @@ const colorSettingLabels: Record<ColorSettingId, string> = {
 	editorMessages: "Editor + previous messages",
 };
 
+// "theme" only remaps named colors; hex colors (every default in `colors`) render the same in
+// both modes, deliberately since 1.5.1. Runtime styles ("bold green", …) are named, so they follow. Describe exactly that, so the setting does not overpromise.
 const colorSettingDescriptions: Record<ColorSettingId, string> = {
 	starship:
-		"Choose whether footer runtime/git/context colors use Pi theme tokens or terminal palette styles.",
+		"Theme maps named footer colors (e.g. green, the runtime styles) to Pi theme tokens; terminal uses the palette. Hex colors, incl. all default footer colors, look the same in both.",
 	editorMessages:
-		"Choose Pi theme colors or terminal styles for editor chrome and message rails. Sakura gradient borders are preserved.",
+		"Theme maps named editor colors to Pi theme tokens and tints the sent-message rail; terminal uses the palette. Hex defaults and Sakura gradient borders are unchanged.",
 };
 
 const featureSettingLabels: Record<FeatureSettingId, string> = {

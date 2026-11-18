@@ -42,6 +42,9 @@ once after updating; run `/sakura-changelog` on any supported Pi to read this fi
   - Toggling the Thought trail re-renders thinking blocks already on screen.
   - `/zentui` commands outside the TUI (RPC, print) start from the saved config, not defaults.
   - `scrollbarTrack`, `scrollbarThumb` and `searchMatchText` are accepted as colour tokens.
+  - The colour-source descriptions say what `theme` really does: it remaps named colours (such as
+    the built-in runtime styles) and tints the sent-message rail, while hex colours (every default in
+    `colors`) and the Sakura gradients look the same in both modes. Behaviour is unchanged.
 - `/sakura-changelog`: no blank page after widening the terminal; hard-wrapped bullets reflow with a
   hanging indent; inline code spans close correctly.
 - Matrix rain: `on` during a running preview keeps the rain for the rest of the run; wide terminals
