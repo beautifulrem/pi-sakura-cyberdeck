@@ -191,6 +191,11 @@ export type FooterHooks = {
 	isAgentWorking: () => boolean;
 	/** Receives a callback that re-evaluates the pulse timer (config change / agent state). */
 	setAnimationSync: (fn: (() => void) | undefined) => void;
+	/**
+	 * Pi disposed this footer: Zentui removed it, or another extension's setFooter
+	 * replaced it. Either way it is no longer on screen.
+	 */
+	onDisposed?: () => void;
 };
 
 /** Format variables drawn with a phase-tinted gradient, plus every alias that maps to one. */
@@ -253,6 +258,7 @@ export function installFooter(
 				hooks.setRequestRender(undefined);
 				hooks.setExtensionStatusesGetter?.(undefined);
 				hooks.setAnimationSync(undefined);
+				hooks.onDisposed?.();
 			},
 			invalidate() {},
 			render(width: number): string[] {
