@@ -140,3 +140,59 @@ test("/zentui toggles outside the TUI start from the saved config", async () => 
 	}
 	writeFileSync(configFile, "{}");
 });
+
+test("a footer replaced by another extension is released, not deleted", async () => {
+	writeFileSync(configFile, "{}");
+	const { emit, run } = await setup();
+	const session = makeCtx();
+	const other: FooterFactory = () => ({ render: () => ["other footer"] });
+	try {
+		await emit("session_start", {}, session.ctx);
+		await settle();
+		const zentuiFooter = session.footerFactory();
+		assert.ok(zentuiFooter);
+
+		// Another extension takes the footer; Pi disposes Zentui's.
+		session.ctx.ui.setFooter(other);
+		const checks = session.trustChecks();
+		await emit("agent_end", {}, session.ctx);
+		await emit("tool_execution_end", {}, session.ctx);
+		assert.equal(session.trustChecks(), checks, "no project probes for an invisible footer");
+
+		await run("statusline disable", session.ctx);
+		assert.equal(session.footerFactory(), other, "disabling Zentui's status line keeps theirs");
+
+		await run("statusline enable", session.ctx);
+		assert.notEqual(session.footerFactory(), other, "an explicit enable reinstalls Zentui's footer");
+		assert.match(session.footer()?.render(120)[0] ?? "", /main/);
+
+		// Enabling while the config already says enabled also reclaims it.
+		session.ctx.ui.setFooter(other);
+		await run("statusline enable", session.ctx);
+		assert.notEqual(session.footerFactory(), other);
+
+		session.ctx.ui.setFooter(other);
+		await emit("session_shutdown", {}, session.ctx);
+		assert.equal(session.footerFactory(), other, "shutdown leaves the other extension's footer");
+	} finally {
+		await emit("session_shutdown", {}, session.ctx);
+		writeFileSync(configFile, "{}");
+	}
+});
+
+test("a session restart keeps the new footer live after disposing the old one", async () => {
+	writeFileSync(configFile, "{}");
+	const { emit } = await setup();
+	const session = makeCtx();
+	try {
+		await emit("session_start", {}, session.ctx);
+		// A second start without shutdown: mounting the new footer disposes the old instance.
+		await emit("session_start", {}, session.ctx);
+		await settle();
+		const checks = session.trustChecks();
+		await emit("agent_end", {}, session.ctx);
+		assert.equal(session.trustChecks(), checks + 1, "the new footer still drives project refreshes");
+	} finally {
+		await emit("session_shutdown", {}, session.ctx);
+	}
+});

@@ -121,6 +121,8 @@ export default function (pi: ExtensionAPI) {
 	let stopRefreshInterval: StopProjectRefreshInterval = () => {};
 	let cleanupPrototypePatches: () => void = () => {};
 	let footerInstalled = false;
+	/** Identifies the current footer install, so a stale instance's dispose cannot release it. */
+	let footerToken = 0;
 	let editorInstalled = false;
 	let editorInstallMode: EditorInstallMode = "none";
 	let installedEditorFactory: EditorFactory | undefined;
@@ -366,8 +368,19 @@ export default function (pi: ExtensionAPI) {
 		return true;
 	};
 
+	/** The footer is off screen (removed, or replaced by another extension): stop feeding it. */
+	const releaseFooterState = () => {
+		stopClockTimer();
+		stopProjectRefresh();
+		footerInstalled = false;
+		requestFooterRender = undefined;
+		syncFooterAnimation = undefined;
+		getActiveExtensionStatuses = () => new Map();
+	};
+
 	const installStatusLine = (ctx: ExtensionContext) => {
 		if (footerInstalled) return;
+		const token = ++footerToken;
 		installFooter(ctx, state, getCurrentConfig, {
 			setRequestRender: (fn) => {
 				requestFooterRender = fn;
@@ -380,6 +393,13 @@ export default function (pi: ExtensionAPI) {
 			isAgentWorking: () => agentWorking && !uiPromptActive,
 			setAnimationSync: (fn) => {
 				syncFooterAnimation = fn;
+			},
+			// Pi disposes our footer when any extension calls setFooter. Without this the
+			// timers and probes kept running for an invisible footer and re-enabling did nothing.
+			onDisposed: () => {
+				if (token !== footerToken) return;
+				footerToken += 1;
+				releaseFooterState();
 			},
 		});
 		footerInstalled = true;
@@ -394,13 +414,11 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	const uninstallStatusLine = (ctx: ExtensionContext) => {
-		stopClockTimer();
-		stopProjectRefresh();
-		ctx.ui.setFooter(undefined);
-		footerInstalled = false;
-		requestFooterRender = undefined;
-		syncFooterAnimation = undefined;
-		getActiveExtensionStatuses = () => new Map();
+		const owned = footerInstalled;
+		footerToken += 1;
+		releaseFooterState();
+		// Clearing restores Pi's footer: only do it while the footer is still ours.
+		if (owned) ctx.ui.setFooter(undefined);
 	};
 
 	const applyConfiguredUi = (ctx: ExtensionContext): ApplyUiResult => {
@@ -517,7 +535,8 @@ export default function (pi: ExtensionAPI) {
 			syncFooterAnimation = undefined;
 			getActiveExtensionStatuses = () => new Map();
 			if (isTuiContext(ctx)) {
-				ctx.ui.setFooter(undefined);
+				// Another extension's footer (ours was disposed) is not ours to remove.
+				if (footerInstalled) ctx.ui.setFooter(undefined);
 				const currentFactory = ctx.ui.getEditorComponent();
 				if (!currentFactory || isZentuiEditorFactory(currentFactory)) {
 					ctx.ui.setEditorComponent(
@@ -529,6 +548,7 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 		} finally {
+			footerToken += 1;
 			wrappedEditorFactory = undefined;
 			installedEditorFactory = undefined;
 			editorInstallMode = "none";
