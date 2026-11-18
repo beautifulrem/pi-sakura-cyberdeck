@@ -294,7 +294,12 @@ export function installFooter(
 				if (contextCache !== undefined) return contextCache;
 				const contextUsage = getCachedContextUsage(ctx);
 				const liveContext = hooks.getLiveContext?.();
-				const contextWindow = ctx.model?.contextWindow ?? contextUsage?.contextWindow;
+				// Pi sizes context by the routed physical model; a virtual (routed) model itself
+				// reports contextWindow 0, which `??` would keep. Prefer Pi's figure, then a real window.
+				const modelWindow = ctx.model?.contextWindow;
+				const contextWindow =
+					contextUsage?.contextWindow ??
+					(modelWindow !== undefined && modelWindow > 0 ? modelWindow : undefined);
 				const useLiveContext =
 					liveContext !== undefined && contextWindow !== undefined && contextWindow > 0;
 				const contextPercent = useLiveContext
