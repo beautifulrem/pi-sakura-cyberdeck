@@ -149,6 +149,25 @@ function renderEditorFrameBorder(
 	);
 }
 
+/**
+ * Pi's editor writes "↑ N more" / "↓ N more" into a border when lines are scrolled out of view
+ * (pi-tui `createScrollBorder`). Read it from a *marked* border only, so user text that merely
+ * looks like an indicator is never taken for one.
+ */
+function scrollIndicator(line: string | undefined): string | undefined {
+	const match = /([↑↓]) (\d+) more/.exec(plainRenderedText(line ?? ""));
+	return match ? `${match[1]} ${match[2]} more` : undefined;
+}
+
+/** Full-width frame rule, centring the scroll indicator like Pi does; a plain rule if it cannot fit. */
+function frameRule(width: number, indicator: string | undefined): string {
+	const label = indicator ? ` ${indicator} ` : "";
+	const labelWidth = visibleWidth(label);
+	if (!label || labelWidth + 2 > width) return "─".repeat(width);
+	const left = Math.floor((width - labelWidth) / 2);
+	return `${"─".repeat(left)}${label}${"─".repeat(width - left - labelWidth)}`;
+}
+
 function editorThinkingStyle(config: PolishedTuiConfig, level: string): string | undefined {
 	switch (level.toLowerCase()) {
 		case "minimal":
@@ -365,8 +384,12 @@ function renderPolishedFrame({
 	const copyFriendlyMeta = composeMetadataLine(meta, rightStatus, Math.max(0, width - 1));
 	const railedMeta = composeMetadataLine(meta, rightStatus, innerWidth);
 
-	const top = renderEditorFrameBorder("─".repeat(width), config, uiTheme, colorSource);
-	const bottom = renderEditorFrameBorder("─".repeat(width), config, uiTheme, colorSource);
+	// The frame replaces Pi's own borders, so carry over their hidden-line counts.
+	const marked = borderIndexes.length >= 2;
+	const topIndicator = marked ? scrollIndicator(baseRendered[borderIndexes[0]!]) : undefined;
+	const bottomIndicator = marked ? scrollIndicator(baseRendered[borderIndexes.at(-1)!]) : undefined;
+	const top = renderEditorFrameBorder(frameRule(width, topIndicator), config, uiTheme, colorSource);
+	const bottom = renderEditorFrameBorder(frameRule(width, bottomIndicator), config, uiTheme, colorSource);
 	const lines = ["", ...editorLines, "", railedMeta];
 	const renderedLines = config.features.copyFriendly
 		? [
