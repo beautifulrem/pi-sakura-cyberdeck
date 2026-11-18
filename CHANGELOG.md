@@ -3,7 +3,18 @@
 All notable changes to pi-sakura-cyberdeck. Pi >= 1.5.0 shows new package entries
 once after updating; run `/sakura-changelog` on any supported Pi to read this file.
 
-## [Unreleased]
+## [1.5.2] - 2026-11-18
+
+### Highlights
+
+- **Every tool card is framed**, including image results (`read` of a PNG on a vision model,
+  browser screenshots), on plain, Kitty and iTerm2 terminals.
+- **Editor cues are back**: Pi's bash-mode colour and `↑/↓ N more` scroll labels show through the
+  Sakura frame.
+- **Sturdier footer**: keeps context/tokens/cost on narrow terminals, coexists with other footer
+  extensions, and spawns far fewer git processes.
+- A robustness pass over settings, `/sakura-changelog`, matrix rain and shimmer, with a regression
+  test for every fix.
 
 ### Fixed
 
@@ -11,7 +22,8 @@ once after updating; run `/sakura-changelog` on any supported Pi to read this fi
   block skipped the frame, so `read` of a PNG looked different depending on whether the model accepts
   images (non-vision models never receive the image) and `agent_browser` screenshot results were
   never framed. Text rows are padded so the right rail lines up; Kitty and iTerm2 image rows only
-  gain the left rail so nothing is drawn over the picture.
+  gain the left rail so nothing is drawn over the picture. Rows wider than the card (from a
+  self-rendered tool) are clipped so the right rail stays inside the terminal.
 - Sent prompts keep Pi's OSC 133 prompt markers at the start of the line. The rail used to push them
   inward, so Pi no longer stripped them (stray shell-prompt marks in the terminal) and fullscreen
   previous/next-prompt navigation could not find prompts.
