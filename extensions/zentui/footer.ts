@@ -100,14 +100,18 @@ function prependStatusArea(base: string, statusText: string, separator: string):
 	return `${statusText}${separator}${base}`;
 }
 
+/**
+ * Built-in left/right that do not fit side by side. The right side (context, tokens, cost) is
+ * the at-a-glance state, so it stays whole and right-aligned; the left is truncated into what
+ * is left after a one-space gap. A right side wider than the line is itself truncated.
+ */
 function composeBuiltInFooterContent(left: string, right: string, innerWidth: number): string {
-	const leftWidth = visibleWidth(left);
+	if (!right) return truncateToWidth(left, innerWidth, "");
 	const rightWidth = visibleWidth(right);
-	return leftWidth >= innerWidth
-		? truncateToWidth(left, innerWidth, "")
-		: leftWidth + 1 + rightWidth <= innerWidth
-			? `${left}${" ".repeat(innerWidth - leftWidth - rightWidth)}${right}`
-			: truncateToWidth(left, innerWidth, "");
+	if (rightWidth >= innerWidth) return truncateToWidth(right, innerWidth, "");
+	const leftText = truncateToWidth(left, Math.max(0, innerWidth - rightWidth - 1), "");
+	// Pad from the truncated left's real width: a wide (CJK) character may stop one column short.
+	return `${leftText}${" ".repeat(innerWidth - visibleWidth(leftText) - rightWidth)}${right}`;
 }
 
 function composeFooterContent(
