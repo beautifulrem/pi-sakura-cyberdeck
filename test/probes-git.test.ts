@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { readGitStatus } from "../extensions/zentui/git";
@@ -87,5 +95,13 @@ test(
 		assert.equal(result.status.gitStateLabel, undefined);
 		const calls = spawned().map((line) => line.split(" ")[0]);
 		for (const sub of ["rev-parse", "status", "describe", "diff"]) assert.ok(calls.includes(sub), sub);
+
+		// A symlinked path has no .git on its lexical ancestors: the probes wait for
+		// rev-parse instead of starting with it, and the result is the same.
+		const link = join(mkdtempSync(join(tmpdir(), "zentui-link-")), "sub");
+		symlinkSync(join(dir, "sub"), link);
+		const viaLink = await readGitStatus(link, ALL_PROBES);
+		assert.deepEqual(viaLink, result);
+		assert.equal(spawned()[0], "rev-parse --git-dir");
 	},
 );

@@ -91,6 +91,8 @@ test("styled $sep units still collapse and strip as a whole", () => {
 		renderStyle(theme, "#888888", " › "),
 		renderStyleForSource(theme, "theme", "muted", " › "),
 		renderStyleForSource(theme, "theme", "bold muted", " › "),
+		// Pi's faint theme tokens: `fg` opens with colour + SGR 2 and closes with ESC[22;39m.
+		`\x1b[38;5;244m\x1b[2m › \x1b[22;39m`,
 	]) {
 		assert.equal(stripOrphanSeparators(`${sep}${a}${sep}${sep}${a}${sep}`, "›"), `${a}${sep}${a}`);
 	}
