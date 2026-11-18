@@ -22,7 +22,6 @@ import {
 	frameBottom,
 	frameTop,
 	installToolExecutionStyle,
-	isTerminalImageLine,
 } from "../extensions/zentui/tool-execution";
 import { installUserMessageStyle } from "../extensions/zentui/user-message";
 
@@ -412,11 +411,15 @@ test("image results are framed on every terminal; image rows only gain the left 
 				assert.equal(out.length, inner.length + 2, `${label}: title and bottom rows added`);
 				assert.match(strip(out[1]!), /^╭─ ✓ READ FILE · COMPLETE ─+╮$/, label);
 				assert.match(strip(out.at(-1)!), /^╰─+╯$/, label);
-				const imageRows = inner.filter((line) => isTerminalImageLine(line));
+				// Expected image rows come from the stock output and the protocol under test, not from
+				// the renderer's own classifier.
+				const protocolPrefix = images === "kitty" ? "\x1b_G" : images === "iterm2" ? "\x1b]1337;File=" : undefined;
+				const isImageRow = (line: string) => protocolPrefix !== undefined && line.includes(protocolPrefix);
+				const imageRows = inner.filter(isImageRow);
 				assert.equal(imageRows.length, images ? 1 : 0, `${label}: Pi drew the image as expected`);
 				for (let i = 1; i < inner.length; i++) {
 					const line = out[i + 1]!;
-					if (isTerminalImageLine(inner[i]!)) {
+					if (isImageRow(inner[i]!)) {
 						assert.ok(line.endsWith(inner[i]!), `${label}: image row ${i} passed through untouched`);
 						assert.equal(strip(line.slice(0, line.length - inner[i]!.length)), "┃ ", `${label}: left rail only`);
 					} else {
@@ -432,9 +435,46 @@ test("image results are framed on every terminal; image rows only gain the left 
 	}
 });
 
-test("short text rows (spacers) are padded so the right rail lines up", () => {
-	const tool = makeTool();
+test("short text rows are padded so the right rail lines up", () => {
+	// Pi's image spacer and the Kitty placeholder rows under a picture are "" (not padded).
+	const original = getCapabilities();
+	try {
+		setCapabilities({ ...original, images: "kitty" });
+		const tool = makeTool({ body: "Read image file [image/png]" });
+		finishWithImage(tool);
+		const width = 40;
+		const inner = stockToolRender.call(tool, width - 3);
+		const shortRows = inner
+			.map((line, i) => [line, i] as const)
+			.filter(([line, i]) => i > 0 && !line.includes("\x1b_G") && visibleWidth(line) < width - 3);
+		assert.ok(shortRows.length > 0, "fixture has a body row narrower than the card");
+		const card = tool.render(width);
+		for (const [, i] of shortRows) {
+			assert.equal(visibleWidth(card[i + 1]!), width, `row ${i} padded to the card width`);
+			assert.ok(strip(card[i + 1]!).endsWith("│"), `row ${i} ends with the right rail`);
+		}
+	} finally {
+		setCapabilities(original);
+	}
+});
+
+test("rows wider than the card are clipped so the right rail stays inside", () => {
+	const wide: Component = { render: () => ["x".repeat(200), "漢🌸".repeat(80)], invalidate() {} };
+	const tool = new ToolExecutionComponent(
+		"read_file",
+		"call-wide",
+		{ path: "a.ts" },
+		{},
+		{ renderShell: "self", renderCall: () => wide, renderResult: () => textComponent("ok") },
+		ui,
+		"/tmp",
+	);
 	finish(tool, false);
-	const card = tool.render(40);
-	for (const line of card.slice(1)) assert.equal(visibleWidth(line), 40);
+	for (const width of [20, 40, 61]) {
+		const card = tool.render(width);
+		for (const line of card.slice(1)) {
+			assert.ok(visibleWidth(line) <= width, `width ${width}: ${visibleWidth(line)}`);
+			assert.ok(/[│╮╯]$/.test(strip(line)), `width ${width}: row keeps its right edge`);
+		}
+	}
 });

@@ -1,5 +1,5 @@
 import { type Theme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { getColorMode, paintFg, type RGB } from "../shared/color";
 import { renderSakuraFrameGradient } from "./gradient";
 import { installPrototypePatch } from "./prototype-patch-registry";
@@ -80,7 +80,7 @@ function toolLabelName(runtime: ToolExecutionRuntime): string {
 const KITTY_IMAGE_PREFIX = "\x1b_G";
 const ITERM2_IMAGE_PREFIX = "\x1b]1337;File=";
 
-export function isTerminalImageLine(line: string): boolean {
+function isTerminalImageLine(line: string): boolean {
 	return line.includes(KITTY_IMAGE_PREFIX) || line.includes(ITERM2_IMAGE_PREFIX);
 }
 
@@ -111,8 +111,11 @@ function isFrameable(runtime: ToolExecutionRuntime): boolean {
  */
 function railLine(line: string, innerWidth: number, left: string, right: string): string {
 	if (isTerminalImageLine(line)) return `${left}${line}`;
-	const pad = innerWidth - visibleWidth(line);
-	return `${left}${line}${pad > 0 ? " ".repeat(pad) : ""}${right}`;
+	// A self-rendered tool may return rows wider than the width it was given; clip them so the
+	// right rail stays inside the card instead of being cut off by the terminal.
+	const body = visibleWidth(line) > innerWidth ? truncateToWidth(line, innerWidth, "") : line;
+	const pad = innerWidth - visibleWidth(body);
+	return `${left}${body}${pad > 0 ? " ".repeat(pad) : ""}${right}`;
 }
 
 export type DiffStats = { added: number; removed: number };
