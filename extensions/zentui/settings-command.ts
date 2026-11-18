@@ -669,6 +669,9 @@ export function registerZentuiSettingsCommand(pi: ExtensionAPI, deps: SettingsCo
 				let activeSection: SettingsSection = "coloring";
 				const applyFeatureChange = (id: FeatureSettingId, newValue: FeatureState) => {
 					const result = deps.setUiFeatures(featurePatch(id, newValue), ctx);
+					// Displayed thinking is cached inside Pi's Markdown components. Zentui may hold
+					// no TUI handle of its own (footer and editor off), so invalidate from here too.
+					if (id === "thinkingTrail") tui.invalidate();
 					deps.requestRender();
 					ctx.ui.notify(featureNotification(id, newValue, result), "info");
 					tui.requestRender();

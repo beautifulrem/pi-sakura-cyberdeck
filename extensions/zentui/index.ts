@@ -115,12 +115,16 @@ export default function (pi: ExtensionAPI) {
 	let probePlan: { version: number; plan: ProjectProbePlan } | undefined;
 	let activeCtx: ExtensionContext | undefined;
 	let activeTheme: Theme | undefined;
+	/** Pi's TUI, as seen by our footer or editor factory; needed to drop cached renders. */
+	let activeTui: Pick<TUI, "invalidate" | "requestRender"> | undefined;
 	let requestFooterRender: (() => void) | undefined;
 	let syncFooterAnimation: (() => void) | undefined;
 	let getActiveExtensionStatuses: () => ReadonlyMap<string, string> = () => new Map();
 	let stopRefreshInterval: StopProjectRefreshInterval = () => {};
 	let cleanupPrototypePatches: () => void = () => {};
 	let footerInstalled = false;
+	/** Identifies the current footer install, so a stale instance's dispose cannot release it. */
+	let footerToken = 0;
 	let editorInstalled = false;
 	let editorInstallMode: EditorInstallMode = "none";
 	let installedEditorFactory: EditorFactory | undefined;
@@ -290,8 +294,9 @@ export default function (pi: ExtensionAPI) {
 
 	const makeEditorFactory = (ctx: ExtensionContext): ZentuiEditorFactory => {
 		const sessionTheme = ctx.ui.theme;
-		const factory = ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) =>
-			new PolishedEditor(
+		const factory = ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => {
+			activeTui = tui;
+			return new PolishedEditor(
 				tui,
 				theme,
 				keybindings,
@@ -299,7 +304,8 @@ export default function (pi: ExtensionAPI) {
 				getCurrentConfig,
 				editorMeta,
 				getThinkingLevel,
-			)) as ZentuiEditorFactory;
+			);
+		}) as ZentuiEditorFactory;
 		factory[ZENTUI_EDITOR_FACTORY] = true;
 		return factory;
 	};
@@ -309,14 +315,16 @@ export default function (pi: ExtensionAPI) {
 		baseFactory: EditorFactory,
 	): ZentuiEditorFactory => {
 		const sessionTheme = ctx.ui.theme;
-		const factory = ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) =>
-			new WrappedPolishedEditor(
+		const factory = ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => {
+			activeTui = tui;
+			return new WrappedPolishedEditor(
 				baseFactory(tui, theme, keybindings),
 				sessionTheme,
 				getCurrentConfig,
 				editorMeta,
 				getThinkingLevel,
-			)) as ZentuiEditorFactory;
+			);
+		}) as ZentuiEditorFactory;
 		factory[ZENTUI_EDITOR_FACTORY] = true;
 		factory[ZENTUI_EDITOR_BASE_FACTORY] = baseFactory;
 		return factory;
@@ -366,8 +374,19 @@ export default function (pi: ExtensionAPI) {
 		return true;
 	};
 
+	/** The footer is off screen (removed, or replaced by another extension): stop feeding it. */
+	const releaseFooterState = () => {
+		stopClockTimer();
+		stopProjectRefresh();
+		footerInstalled = false;
+		requestFooterRender = undefined;
+		syncFooterAnimation = undefined;
+		getActiveExtensionStatuses = () => new Map();
+	};
+
 	const installStatusLine = (ctx: ExtensionContext) => {
 		if (footerInstalled) return;
+		const token = ++footerToken;
 		installFooter(ctx, state, getCurrentConfig, {
 			setRequestRender: (fn) => {
 				requestFooterRender = fn;
@@ -377,9 +396,19 @@ export default function (pi: ExtensionAPI) {
 				getActiveExtensionStatuses = fn ?? (() => new Map());
 			},
 			getLiveContext: () => liveContext.get(),
+			onMount: (tui) => {
+				activeTui = tui;
+			},
 			isAgentWorking: () => agentWorking && !uiPromptActive,
 			setAnimationSync: (fn) => {
 				syncFooterAnimation = fn;
+			},
+			// Pi disposes our footer when any extension calls setFooter. Without this the
+			// timers and probes kept running for an invisible footer and re-enabling did nothing.
+			onDisposed: () => {
+				if (token !== footerToken) return;
+				footerToken += 1;
+				releaseFooterState();
 			},
 		});
 		footerInstalled = true;
@@ -394,16 +423,19 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	const uninstallStatusLine = (ctx: ExtensionContext) => {
-		stopClockTimer();
-		stopProjectRefresh();
-		ctx.ui.setFooter(undefined);
-		footerInstalled = false;
-		requestFooterRender = undefined;
-		syncFooterAnimation = undefined;
-		getActiveExtensionStatuses = () => new Map();
+		const owned = footerInstalled;
+		footerToken += 1;
+		releaseFooterState();
+		// Clearing restores Pi's footer: only do it while the footer is still ours.
+		if (owned) ctx.ui.setFooter(undefined);
 	};
 
-	const applyConfiguredUi = (ctx: ExtensionContext): ApplyUiResult => {
+	/**
+	 * `claimFooter`: install our footer if it is missing. Only session start and an explicit
+	 * status-line enable claim it; once another extension has replaced it, other settings
+	 * changes must not silently take it back.
+	 */
+	const applyConfiguredUi = (ctx: ExtensionContext, claimFooter: boolean): ApplyUiResult => {
 		const result: ApplyUiResult = { editorBlocked: false };
 		if (!isTuiContext(ctx)) return result;
 		activeTheme = ctx.ui.theme;
@@ -420,7 +452,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (currentConfig.features.statusLine) {
-			installStatusLine(ctx);
+			if (claimFooter) installStatusLine(ctx);
 		} else if (footerInstalled) {
 			uninstallStatusLine(ctx);
 		}
@@ -429,6 +461,7 @@ export default function (pi: ExtensionAPI) {
 
 	/** Adopt a new config: re-plan probes/timers/animation and repaint immediately. */
 	const applyConfig = (next: PolishedTuiConfig) => {
+		const previousPlan = getProbePlan();
 		currentConfig = next;
 		configVersion += 1;
 		syncFooterAnimation?.();
@@ -436,7 +469,11 @@ export default function (pi: ExtensionAPI) {
 		if (ctx && footerInstalled && sessionLifecycle.isCurrent()) {
 			restartProjectRefreshInterval(ctx);
 			startClockTimer();
-			scheduleProjectRefresh(ctx, { force: true });
+			// Skip the throttle only when the probes themselves changed: cycling e.g. the
+			// separator in /zentui must not spawn git/runtime probes on every key press.
+			if (JSON.stringify(getProbePlan()) !== JSON.stringify(previousPlan)) {
+				scheduleProjectRefresh(ctx, { force: true });
+			}
 		}
 		refresh();
 	};
@@ -445,6 +482,9 @@ export default function (pi: ExtensionAPI) {
 		const loaded = loadConfigWithDiagnostics();
 		currentConfig = loaded.config;
 		configVersion += 1;
+		// RPC/print sessions still need the saved values (e.g. `/zentui thinking toggle` saves
+		// a toggle of them); notices and the one-time migration stay with the TUI as before.
+		if (!isTuiContext(ctx)) return;
 		if (loaded.problem && loaded.problem !== lastConfigProblem) {
 			ctx.ui.notify(
 				`Zentui config is invalid, using defaults (settings changes are not saved until it is fixed): ${loaded.problem}`,
@@ -481,10 +521,9 @@ export default function (pi: ExtensionAPI) {
 		footerInstalled = false;
 		editorInstalled = false;
 		installedEditorFactory = undefined;
-		loadConfigForSession(ctx);
 		syncState(state, ctx);
 		stopProjectRefresh();
-		applyConfiguredUi(ctx);
+		applyConfiguredUi(ctx, true);
 		refresh();
 	};
 
@@ -510,7 +549,8 @@ export default function (pi: ExtensionAPI) {
 			syncFooterAnimation = undefined;
 			getActiveExtensionStatuses = () => new Map();
 			if (isTuiContext(ctx)) {
-				ctx.ui.setFooter(undefined);
+				// Another extension's footer (ours was disposed) is not ours to remove.
+				if (footerInstalled) ctx.ui.setFooter(undefined);
 				const currentFactory = ctx.ui.getEditorComponent();
 				if (!currentFactory || isZentuiEditorFactory(currentFactory)) {
 					ctx.ui.setEditorComponent(
@@ -522,12 +562,14 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 		} finally {
+			footerToken += 1;
 			wrappedEditorFactory = undefined;
 			installedEditorFactory = undefined;
 			editorInstallMode = "none";
 			footerInstalled = false;
 			editorInstalled = false;
 			activeTheme = undefined;
+			activeTui = undefined;
 			activeCtx = undefined;
 			requestFooterRender = undefined;
 		}
@@ -541,6 +583,7 @@ export default function (pi: ExtensionAPI) {
 		state.sessionStartEpoch = Date.now();
 		invalidateSessionCaches();
 		lastProjectCwd = undefined;
+		loadConfigForSession(ctx);
 		installUi(ctx);
 		sessionLifecycle.defer(() => reconcileEditor(ctx));
 	});
@@ -558,8 +601,15 @@ export default function (pi: ExtensionAPI) {
 			applyConfig(saveColorSourcesPatch(patch));
 		},
 		setUiFeatures(patch: Partial<UiFeaturesConfig>, ctx: ExtensionContext) {
+			const thinkingTrail = currentConfig.features.thinkingTrail;
 			applyConfig(saveUiFeaturesPatch(patch));
-			const result = applyConfiguredUi(ctx);
+			const result = applyConfiguredUi(ctx, patch.statusLine === true);
+			// Pi's Markdown caches lines by text+width and re-runs transformers only on a miss:
+			// displayed thinking keeps its old form unless every component is invalidated.
+			if (currentConfig.features.thinkingTrail !== thinkingTrail && sessionLifecycle.isCurrent()) {
+				activeTui?.invalidate();
+				activeTui?.requestRender();
+			}
 			return {
 				applied: !(patch.editor !== undefined && result.editorBlocked),
 				reason: result.editorBlocked
