@@ -100,6 +100,10 @@ const themeColorTokens = new Set<ThemeColor>([
 	"dim",
 	"text",
 	"thinkingText",
+	// Pi 1.5 optional tokens (fall back to muted/text in themes that omit them).
+	"scrollbarTrack",
+	"scrollbarThumb",
+	"searchMatchText",
 	"userMessageText",
 	"customMessageText",
 	"customMessageLabel",
