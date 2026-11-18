@@ -450,6 +450,9 @@ export default function (pi: ExtensionAPI) {
 		const loaded = loadConfigWithDiagnostics();
 		currentConfig = loaded.config;
 		configVersion += 1;
+		// RPC/print sessions still need the saved values (e.g. `/zentui thinking toggle` saves
+		// a toggle of them); notices and the one-time migration stay with the TUI as before.
+		if (!isTuiContext(ctx)) return;
 		if (loaded.problem && loaded.problem !== lastConfigProblem) {
 			ctx.ui.notify(
 				`Zentui config is invalid, using defaults (settings changes are not saved until it is fixed): ${loaded.problem}`,
@@ -486,7 +489,6 @@ export default function (pi: ExtensionAPI) {
 		footerInstalled = false;
 		editorInstalled = false;
 		installedEditorFactory = undefined;
-		loadConfigForSession(ctx);
 		syncState(state, ctx);
 		stopProjectRefresh();
 		applyConfiguredUi(ctx);
@@ -546,6 +548,7 @@ export default function (pi: ExtensionAPI) {
 		state.sessionStartEpoch = Date.now();
 		invalidateSessionCaches();
 		lastProjectCwd = undefined;
+		loadConfigForSession(ctx);
 		installUi(ctx);
 		sessionLifecycle.defer(() => reconcileEditor(ctx));
 	});

@@ -119,3 +119,24 @@ test("settings that cannot change probes do not force a project rescan", async (
 	await run('format "$cwd $git_branch $package"', session.ctx);
 	assert.equal(session.trustChecks(), before + 1);
 });
+
+test("/zentui toggles outside the TUI start from the saved config", async () => {
+	for (const mode of ["rpc", "print"]) {
+		writeFileSync(configFile, JSON.stringify({ features: { thinkingTrail: false } }));
+		const { emit, run, transformers } = await setup();
+		const session = makeCtx(mode);
+		try {
+			await emit("session_start", {}, session.ctx);
+			assert.equal(session.footerFactory(), undefined, `${mode}: no UI is installed`);
+			const thinking = { messageType: "assistant-thinking", availableWidth: 80 };
+			assert.equal(transformers[0]?.("Step one.\n\nStep two.", thinking), "Step one.\n\nStep two.", `${mode}: saved trail-off is honoured`);
+			await run("thinking toggle", session.ctx);
+			const saved = JSON.parse(readFileSync(configFile, "utf8"));
+			assert.equal(saved.features.thinkingTrail, true, `${mode}: toggled from the saved value`);
+			assert.deepEqual(session.notices.filter((n) => /invalid|fixed-editor/i.test(n)), []);
+		} finally {
+			await emit("session_shutdown", {}, session.ctx);
+		}
+	}
+	writeFileSync(configFile, "{}");
+});
