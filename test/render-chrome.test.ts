@@ -7,7 +7,7 @@ import {
 	UserMessageComponent,
 	Theme,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, Container, Text, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, Container, getCapabilities, setCapabilities, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { getColorMode, setColorMode } from "../extensions/shared/color";
 import { renderStyleForSource, safeThemeFg } from "../extensions/zentui/style";
 import { renderSakuraFrameGradient } from "../extensions/zentui/gradient";
@@ -17,7 +17,13 @@ import {
 	applyThinkingLabel,
 	SAKURA_HIDDEN_THINKING_LABEL,
 } from "../extensions/zentui/thinking-message";
-import { diffStats, frameBottom, frameTop, installToolExecutionStyle } from "../extensions/zentui/tool-execution";
+import {
+	diffStats,
+	frameBottom,
+	frameTop,
+	installToolExecutionStyle,
+	isTerminalImageLine,
+} from "../extensions/zentui/tool-execution";
 import { installUserMessageStyle } from "../extensions/zentui/user-message";
 
 type AnyRecord = Record<string, any>;
@@ -367,4 +373,64 @@ test("thinking label uses the public setHiddenThinkingLabel API and fails safe",
 			},
 		}),
 	);
+});
+
+// 1x1 PNG
+const PNG_1X1 =
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+function finishWithImage(tool: ToolExecutionComponent) {
+	tool.updateResult(
+		{
+			content: [
+				{ type: "text", text: "Read image file [image/png]" },
+				{ type: "image", data: PNG_1X1, mimeType: "image/png" },
+			],
+			isError: false,
+		} as never,
+		false,
+	);
+}
+
+test("image results are framed on every terminal; image rows only gain the left rail", () => {
+	const original = getCapabilities();
+	try {
+		for (const images of [null, "kitty", "iterm2"] as const) {
+			setCapabilities({ ...original, images });
+			for (const renderShell of ["default", "self"] as const) {
+				const tool = makeTool({ renderShell, body: "Read image file [image/png]" });
+				finishWithImage(tool);
+				const width = 60;
+				const inner = stockToolRender.call(tool, width - 3);
+				const out = tool.render(width);
+				const label = `${images ?? "no-images"}/${renderShell}`;
+
+				assert.equal(out.length, inner.length + 2, `${label}: title and bottom rows added`);
+				assert.match(strip(out[1]!), /^╭─ ✓ READ FILE · COMPLETE ─+╮$/, label);
+				assert.match(strip(out.at(-1)!), /^╰─+╯$/, label);
+				const imageRows = inner.filter((line) => isTerminalImageLine(line));
+				assert.equal(imageRows.length, images ? 1 : 0, `${label}: Pi drew the image as expected`);
+				for (let i = 1; i < inner.length; i++) {
+					const line = out[i + 1]!;
+					if (isTerminalImageLine(inner[i]!)) {
+						assert.ok(line.endsWith(inner[i]!), `${label}: image row ${i} passed through untouched`);
+						assert.equal(strip(line.slice(0, line.length - inner[i]!.length)), "┃ ", `${label}: left rail only`);
+					} else {
+						assert.equal(visibleWidth(line), width, `${label}: row ${i} fills the card`);
+						assert.ok(strip(line).startsWith("┃ ") && strip(line).endsWith("│"), `${label}: row ${i} has both rails`);
+						assert.ok(line.includes(inner[i]!), `${label}: row ${i} content unchanged`);
+					}
+				}
+			}
+		}
+	} finally {
+		setCapabilities(original);
+	}
+});
+
+test("short text rows (spacers) are padded so the right rail lines up", () => {
+	const tool = makeTool();
+	finish(tool, false);
+	const card = tool.render(40);
+	for (const line of card.slice(1)) assert.equal(visibleWidth(line), 40);
 });
