@@ -826,6 +826,12 @@ export function saveUiFeaturesPatch(
 		const existing = isRecord(record.features)
 			? { ...(record.features as Record<string, unknown>) }
 			: {};
+		// An absent messageStyle falls back to `editor` (≤1.1.6 configs). Pin the value it
+		// resolves to now, so saving only `editor` (e.g. a new user disabling the editor)
+		// cannot silently switch message styling too, while legacy files keep their look.
+		if (typeof existing.messageStyle !== "boolean") {
+			existing.messageStyle = normalizeUiFeatures(existing).messageStyle;
+		}
 		record.features = {
 			...existing,
 			...validUiFeatureEntries(patch),
