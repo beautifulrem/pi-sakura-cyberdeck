@@ -3,6 +3,13 @@ import { statSync } from "node:fs";
 import { join } from "node:path";
 
 const VERSION_TIMEOUT_MS = 2_000;
+/**
+ * A failed or timed-out version read (cold mise/asdf/pyenv shim, missing binary)
+ * is reused for this long, then retried. Longer than the 5 s refresh throttle so a
+ * shim that always hangs cannot stall every agent-time refresh by VERSION_TIMEOUT_MS,
+ * short enough that a shim which was merely cold shows the version within a minute.
+ */
+const VERSION_FAILURE_RETRY_MS = 30_000;
 
 export type RuntimeInfo = {
 	name: string;
@@ -127,7 +134,10 @@ const RUNTIMES: readonly RuntimeDef[] = [
 ];
 
 const RUNTIME_CACHE_MAX = 16;
-const runtimeInfoCache = new Map<string, { key: string; runtime: RuntimeInfo | undefined }>();
+const runtimeInfoCache = new Map<
+	string,
+	{ key: string; runtime: RuntimeInfo | undefined; retryAt?: number }
+>();
 
 function fileMtime(cwd: string, name: string): number | undefined {
 	try {
@@ -180,7 +190,9 @@ export async function readRuntimeInfo(cwd: string): Promise<RuntimeReadResult> {
 		const pins = VERSION_PIN_FILES.map((name) => `${name}:${mtime(name) ?? "-"}`).join("|");
 		const key = `${def?.name ?? "-"}|${pins}`;
 		const cached = runtimeInfoCache.get(cwd);
-		if (cached?.key === key) return { kind: "ok", runtime: cached.runtime };
+		if (cached?.key === key && (cached.retryAt === undefined || Date.now() < cached.retryAt)) {
+			return { kind: "ok", runtime: cached.runtime };
+		}
 
 		const runtime: RuntimeInfo | undefined = def
 			? {
@@ -191,7 +203,10 @@ export async function readRuntimeInfo(cwd: string): Promise<RuntimeReadResult> {
 				}
 			: undefined;
 		runtimeInfoCache.delete(cwd);
-		runtimeInfoCache.set(cwd, { key, runtime });
+		// Only a successful read is kept until the project state changes.
+		const retryAt =
+			runtime && runtime.version === undefined ? Date.now() + VERSION_FAILURE_RETRY_MS : undefined;
+		runtimeInfoCache.set(cwd, { key, runtime, retryAt });
 		while (runtimeInfoCache.size > RUNTIME_CACHE_MAX) {
 			const oldest = runtimeInfoCache.keys().next().value;
 			if (oldest === undefined) break;
