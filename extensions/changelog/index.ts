@@ -33,12 +33,16 @@ export function parseChangelog(markdown: string): ChangelogEntry[] {
 	const entries: ChangelogEntry[] = [];
 	let entry: ChangelogEntry | undefined;
 	let section: ChangelogSection | undefined;
+	// Markdown soft line breaks: a hard-wrapped bullet or paragraph continues on the next
+	// non-bullet line until a blank line or heading ends it.
+	let open = false;
 	for (const raw of markdown.split(/\r?\n/)) {
 		const line = raw.trimEnd();
 		const heading = line.match(/^##\s+\[?v?(\d+\.\d+\.\d+[^\]\s]*)\]?(?:\s+[-–—]\s+(.+))?\s*$/);
 		if (heading) {
 			entry = { version: heading[1]!, date: heading[2]?.trim(), sections: [] };
 			section = undefined;
+			open = false;
 			entries.push(entry);
 			continue;
 		}
@@ -51,9 +55,20 @@ export function parseChangelog(markdown: string): ChangelogEntry[] {
 		if (sub) {
 			section = { title: sub[1]!.trim(), lines: [] };
 			entry.sections.push(section);
+			open = false;
 			continue;
 		}
-		if (!line.trim()) continue;
+		if (!line.trim()) {
+			open = false;
+			continue;
+		}
+		// Join continuation lines into their bullet/paragraph so the viewer wraps at the
+		// terminal width (not at source line breaks) and inline spans can cross lines.
+		if (open && section?.lines.length && !isBullet(line)) {
+			section.lines[section.lines.length - 1] += ` ${line.trim()}`;
+			continue;
+		}
+		open = true;
 		if (!section) {
 			section = { title: "", lines: [] };
 			entry.sections.push(section);
@@ -66,7 +81,9 @@ export function parseChangelog(markdown: string): ChangelogEntry[] {
 function stripInlineMarkdown(text: string): string {
 	return text
 		.replace(/\*\*(.+?)\*\*/g, "$1")
-		.replace(/`([^`]+)`/g, "$1")
+		// A code span closes only with a backtick run of the same length (CommonMark), so a
+		// literal ``` with no partner stays as written instead of swallowing later spans.
+		.replace(/(?<!`)(`+)(?!`)([\s\S]*?[^`])\1(?!`)/g, "$2")
 		.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
 }
 
