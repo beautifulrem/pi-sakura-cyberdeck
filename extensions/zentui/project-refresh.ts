@@ -33,6 +33,8 @@ export function createProjectRefreshScheduler<T>(
 ): ProjectRefreshScheduler<T> {
 	let refreshInFlight = false;
 	let refreshPending = false;
+	/** Some request queued behind the in-flight refresh was forced; sticky until it runs. */
+	let pendingForce = false;
 	let pendingTarget: T | undefined;
 	let delayedRefresh: ReturnType<typeof setTimeout> | undefined;
 	let lastRefreshStartedAt: number | undefined;
@@ -44,10 +46,11 @@ export function createProjectRefreshScheduler<T>(
 		delayedRefresh = undefined;
 	};
 
-	const runRefresh = (target: T) => {
+	const runRefresh = (target: T, force = false) => {
 		clearDelayedRefresh();
 		if (refreshInFlight) {
 			refreshPending = true;
+			pendingForce ||= force;
 			pendingTarget = target;
 			return;
 		}
@@ -65,14 +68,18 @@ export function createProjectRefreshScheduler<T>(
 					refreshPending = false;
 					const nextTarget = pendingTarget ?? target;
 					pendingTarget = undefined;
-					schedule(nextTarget);
+					// A forced request (session start, config change) must not wait out the
+					// throttle just because it arrived while another refresh was running.
+					const force = pendingForce;
+					pendingForce = false;
+					schedule(nextTarget, { force });
 				}
 			});
 	};
 
 	const schedule = (target: T, options: ScheduleProjectRefreshOptions = {}) => {
 		if (options.force || throttleMs <= 0 || lastRefreshStartedAt === undefined) {
-			runRefresh(target);
+			runRefresh(target, options.force);
 			return;
 		}
 
@@ -100,6 +107,7 @@ export function createProjectRefreshScheduler<T>(
 			clearDelayedRefresh();
 			refreshInFlight = false;
 			refreshPending = false;
+			pendingForce = false;
 			pendingTarget = undefined;
 			lastRefreshStartedAt = undefined;
 		},

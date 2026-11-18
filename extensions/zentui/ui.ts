@@ -7,6 +7,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
+import { getColorMode } from "../shared/color";
 import type { PolishedTuiConfig } from "./config";
 import { renderSakuraGradient, SAKURA_MACARON_GRADIENT } from "./gradient";
 import {
@@ -118,6 +119,8 @@ type PolishedFrameOptions = {
 	modelMeta: EditorMeta;
 	thinkingLevel: string | undefined;
 	rightStatus?: string;
+	/** Pi is in bash mode (see `isBashModeText`). */
+	bashMode?: boolean;
 };
 
 function clampRenderedLines(lines: string[], width: number): string[] {
@@ -131,12 +134,39 @@ function fillLine(content: string, width: number): string {
 	return `${truncated}${pad}`;
 }
 
+/**
+ * Pi 1.5.2's own bash-mode condition (interactive-mode `onChange`), mirrored exactly: the
+ * first non-blank character is `!`, which also covers `!!` (run without adding to context).
+ * Pi shows it by painting the editor border with `theme.getBashModeBorderColor()`; the frame
+ * replaces that border, so it has to show the cue itself.
+ */
+function isBashModeText(text: string): boolean {
+	return text.trimStart().startsWith("!");
+}
+
+/**
+ * Text in the theme's `bashMode` colour (what `getBashModeBorderColor` paints), through the
+ * package colour mode. `undefined` when the theme has no such token (older hosts), so callers
+ * keep their normal colour instead of dropping to an uncoloured frame.
+ */
+function paintBashMode(uiTheme: Theme, text: string): string | undefined {
+	if (getColorMode() === "none") return text;
+	try {
+		return uiTheme.fg("bashMode", text);
+	} catch {
+		return undefined;
+	}
+}
+
 function renderEditorFrameBorder(
 	text: string,
 	config: PolishedTuiConfig,
 	uiTheme: Theme,
 	colorSource: PolishedTuiConfig["colorSources"]["editor"],
+	bashMode = false,
 ): string {
+	const bash = bashMode ? paintBashMode(uiTheme, text) : undefined;
+	if (bash !== undefined) return bash;
 	if (config.colors.editorBorder === SAKURA_MACARON_GRADIENT) {
 		return renderSakuraGradient(text);
 	}
@@ -147,6 +177,25 @@ function renderEditorFrameBorder(
 		EDITOR_BORDER_FALLBACK,
 		text,
 	);
+}
+
+/**
+ * Pi's editor writes "↑ N more" / "↓ N more" into a border when lines are scrolled out of view
+ * (pi-tui `createScrollBorder`). Read it from a *marked* border only, so user text that merely
+ * looks like an indicator is never taken for one.
+ */
+function scrollIndicator(line: string | undefined): string | undefined {
+	const match = /([↑↓]) (\d+) more/.exec(plainRenderedText(line ?? ""));
+	return match ? `${match[1]} ${match[2]} more` : undefined;
+}
+
+/** Full-width frame rule, centring the scroll indicator like Pi does; a plain rule if it cannot fit. */
+function frameRule(width: number, indicator: string | undefined): string {
+	const label = indicator ? ` ${indicator} ` : "";
+	const labelWidth = visibleWidth(label);
+	if (!label || labelWidth + 2 > width) return "─".repeat(width);
+	const left = Math.floor((width - labelWidth) / 2);
+	return `${"─".repeat(left)}${label}${"─".repeat(width - left - labelWidth)}`;
 }
 
 function editorThinkingStyle(config: PolishedTuiConfig, level: string): string | undefined {
@@ -185,17 +234,19 @@ function copyFriendlyPrompt(config: PolishedTuiConfig, uiTheme: Theme, reset: st
 		: "";
 }
 
-function getEditorChromeWidths(config: PolishedTuiConfig, uiTheme: Theme, reset: string) {
+function getEditorChromeWidths(config: PolishedTuiConfig, uiTheme: Theme, reset: string, bashMode = false) {
 	const prompt = copyFriendlyPrompt(config, uiTheme, reset);
+	// Same glyph in bash mode, so the rail width (and mouse mapping) never changes.
 	const rail = config.features.copyFriendly
 		? ""
-		: `${renderStyleForSourceOrFallback(
-				uiTheme,
-				config.colorSources.editor,
-				config.colors.editorAccent,
-				EDITOR_ACCENT_FALLBACK,
-				config.icons.rail,
-			)}${reset} `;
+		: `${(bashMode ? paintBashMode(uiTheme, config.icons.rail) : undefined) ??
+				renderStyleForSourceOrFallback(
+					uiTheme,
+					config.colorSources.editor,
+					config.colors.editorAccent,
+					EDITOR_ACCENT_FALLBACK,
+					config.icons.rail,
+				)}${reset} `;
 	return {
 		prompt,
 		promptWidth: visibleWidth(prompt),
@@ -319,12 +370,13 @@ function renderPolishedFrame({
 	modelMeta,
 	thinkingLevel,
 	rightStatus,
+	bashMode = false,
 }: PolishedFrameOptions): EditorRender {
 	if (width <= 2) return plainEditorRender(baseRendered, width);
 
 	const reset = "\x1b[0m";
 	const colorSource = config.colorSources.editor;
-	const { prompt, promptWidth, rail, railWidth } = getEditorChromeWidths(config, uiTheme, reset);
+	const { prompt, promptWidth, rail, railWidth } = getEditorChromeWidths(config, uiTheme, reset, bashMode);
 	const innerWidth = Math.max(0, width - railWidth);
 	const copyFriendlyContinuation = " ".repeat(promptWidth);
 
@@ -365,8 +417,12 @@ function renderPolishedFrame({
 	const copyFriendlyMeta = composeMetadataLine(meta, rightStatus, Math.max(0, width - 1));
 	const railedMeta = composeMetadataLine(meta, rightStatus, innerWidth);
 
-	const top = renderEditorFrameBorder("─".repeat(width), config, uiTheme, colorSource);
-	const bottom = renderEditorFrameBorder("─".repeat(width), config, uiTheme, colorSource);
+	// The frame replaces Pi's own borders, so carry over their hidden-line counts.
+	const marked = borderIndexes.length >= 2;
+	const topIndicator = marked ? scrollIndicator(baseRendered[borderIndexes[0]!]) : undefined;
+	const bottomIndicator = marked ? scrollIndicator(baseRendered[borderIndexes.at(-1)!]) : undefined;
+	const top = renderEditorFrameBorder(frameRule(width, topIndicator), config, uiTheme, colorSource, bashMode);
+	const bottom = renderEditorFrameBorder(frameRule(width, bottomIndicator), config, uiTheme, colorSource, bashMode);
 	const lines = ["", ...editorLines, "", railedMeta];
 	const renderedLines = config.features.copyFriendly
 		? [
@@ -439,6 +495,7 @@ export class PolishedEditor extends CustomEditor {
 			config,
 			modelMeta: this.getModelMeta(),
 			thinkingLevel: this.getThinkingLevel(),
+			bashMode: isBashModeText(this.getText()),
 		})).lines;
 	}
 
@@ -575,6 +632,7 @@ export class WrappedPolishedEditor implements EditorComponent {
 			modelMeta: this.getModelMeta(),
 			thinkingLevel: this.getThinkingLevel(),
 			rightStatus: readVimStatus(this.base, this.uiTheme),
+			bashMode: isBashModeText(this.base.getText()),
 		})).lines;
 	}
 

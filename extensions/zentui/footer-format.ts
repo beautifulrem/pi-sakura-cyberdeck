@@ -230,6 +230,10 @@ function renderGroup(
 /** One optional SGR sequence (`\x1b[…m`). */
 const ANSI_ONE_SRC = "\u001b\\[[0-9;]*m";
 const ANSI_ONE_GLOBAL = new RegExp(ANSI_ONE_SRC, "g");
+/** An SGR made only of resets: full reset or attribute/colour "off" codes (22–29, 39, 49, 59). */
+const ANSI_CLOSE_SRC = "\x1b\\[(?:(?:0|2[2-9]|39|49|59)(?:;(?:0|2[2-9]|39|49|59))*)?m";
+/** Any other SGR: it switches something on. */
+const ANSI_OPEN_SRC = `(?!${ANSI_CLOSE_SRC})${ANSI_ONE_SRC}`;
 
 type SeparatorPatterns = { consecutive: RegExp; leading: RegExp; trailing: RegExp };
 const separatorPatternCache = new Map<string, SeparatorPatterns | undefined>();
@@ -242,9 +246,13 @@ function separatorPatterns(glyph: string): SeparatorPatterns | undefined {
 	if (separatorPatternCache.has(glyph)) return separatorPatternCache.get(glyph);
 	// Always treat the classic pipe as a separator too (custom format text often uses it).
 	const glyphs = [...new Set(["|", glyph.trim()].filter(Boolean))].map(escapeRegExp);
-	// One separator unit: plain or with a single ANSI wrapper on either side of the
-	// spaced glyph (matches `renderStyle(..., " › ")` output).
-	const unit = `(?:${ANSI_ONE_SRC})?\\s+(?:${glyphs.join("|")})\\s+(?:${ANSI_ONE_SRC})?`;
+	const spacedGlyph = `\\s+(?:${glyphs.join("|")})\\s+`;
+	// One separator unit: the bare spaced glyph, or the glyph wrapped by its own
+	// style (opening codes before, reset codes after, as `renderStyle(..., " › ")`
+	// emits). ANSI only belongs to the unit as that open…close pair: a literal
+	// ` | ` typed between two segments sits between the left segment's reset and
+	// the right segment's opening code, and removing either recolours a segment.
+	const unit = `(?:(?:${ANSI_OPEN_SRC})+${spacedGlyph}(?:${ANSI_CLOSE_SRC})+|${spacedGlyph})`;
 	const patterns = {
 		consecutive: new RegExp(`(${unit})(?:${unit})+`, "g"),
 		leading: new RegExp(`^(?:${unit})+`),

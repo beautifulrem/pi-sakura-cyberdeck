@@ -11,7 +11,8 @@ import { safeThemeFg } from "./style";
  *
  * The message body is Pi's own UserMessageComponent render (markdown options, extension
  * markdown transformers, outputPad, OSC 133 prompt markers) at the reduced width, passed through
- * byte-for-byte. Copy-friendly mode drops the rail so copied text has no extra glyphs.
+ * byte-for-byte except that leading OSC 133 markers stay in front of the rail (see `railLine`).
+ * Copy-friendly mode drops the rail so copied text has no extra glyphs.
  */
 
 type Cleanup = () => void;
@@ -41,10 +42,25 @@ function railFor(config: PolishedTuiConfig | undefined): { text: string; columns
 	return { text, columns: visibleWidth(text) };
 }
 
+/**
+ * Leading OSC 133 prompt markers, matched exactly like Pi's own start-anchored
+ * `OSC133_ZONE_PREFIX` (pi-tui tui-main-screen/layout/tui-alt-screen). Pi strips them only at
+ * line start and fullscreen prompt navigation only finds rows that start with 133;A.
+ */
+const OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
+
+function railLine(line: string, rail: string): string {
+	if (!rail) return line;
+	// Keep Pi's markers in front of the rail: behind it they would leak to the terminal (a false
+	// shell-prompt mark that also ends OSC 7501 program status) and prompt navigation would miss them.
+	const markers = OSC133_ZONE_PREFIX.exec(line)?.[0] ?? "";
+	return `${markers}${rail}${line.slice(markers.length)}`;
+}
+
 export function renderUserMessageCard(inner: readonly string[], width: number, rail: string,
 	border = renderSakuraFrameGradient("─".repeat(width))): string[] {
 	const lines: string[] = [border];
-	for (const line of inner) lines.push(rail ? `${rail}${line}` : line);
+	for (const line of inner) lines.push(railLine(line, rail));
 	lines.push(border);
 	return lines;
 }

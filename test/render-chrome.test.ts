@@ -7,7 +7,7 @@ import {
 	UserMessageComponent,
 	Theme,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, Container, Text, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, Container, getCapabilities, setCapabilities, Text, visibleWidth } from "@earendil-works/pi-tui";
 import { getColorMode, setColorMode } from "../extensions/shared/color";
 import { renderStyleForSource, safeThemeFg } from "../extensions/zentui/style";
 import { renderSakuraFrameGradient } from "../extensions/zentui/gradient";
@@ -17,7 +17,12 @@ import {
 	applyThinkingLabel,
 	SAKURA_HIDDEN_THINKING_LABEL,
 } from "../extensions/zentui/thinking-message";
-import { diffStats, frameBottom, frameTop, installToolExecutionStyle } from "../extensions/zentui/tool-execution";
+import {
+	diffStats,
+	frameBottom,
+	frameTop,
+	installToolExecutionStyle,
+} from "../extensions/zentui/tool-execution";
 import { installUserMessageStyle } from "../extensions/zentui/user-message";
 
 type AnyRecord = Record<string, any>;
@@ -298,15 +303,19 @@ test("user message keeps Pi's markdown options, transforms and OSC 133 markers",
 	assert.equal(out.length, inner.length + 2);
 	assert.match(strip(out[0]!), /^─{50}$/);
 	assert.match(strip(out.at(-1)!), /^─{50}$/);
+	const osc133 = /^(?:\x1b\]133;[ABC]\x07)+/;
 	for (let i = 0; i < inner.length; i++) {
-		assert.ok(out[i + 1]!.endsWith(inner[i]!), `inner line ${i} passed through`);
+		// Pi's leading OSC 133 markers move in front of the rail; the rest passes through.
+		const markers = osc133.exec(inner[i]!)?.[0] ?? "";
+		assert.ok(out[i + 1]!.startsWith(markers), `inner line ${i} keeps its prompt markers first`);
+		assert.ok(out[i + 1]!.endsWith(inner[i]!.slice(markers.length)), `inner line ${i} passed through`);
 		assert.equal(strip(out[i + 1]!), `▐ ${strip(inner[i]!)}`);
 	}
 	const plain = out.map(strip).join("\n");
 	assert.ok(plain.includes("1) first"), "ordered list marker preserved");
 	assert.ok(plain.includes("*not emphasis*") || plain.includes("\\*not emphasis\\*"));
-	assert.ok(out[1]!.includes("\x1b]133;A\x07"));
-	assert.ok(out.at(-2)!.includes("\x1b]133;B\x07\x1b]133;C\x07"));
+	assert.ok(out[1]!.startsWith("\x1b]133;A\x07"));
+	assert.ok(out.at(-2)!.startsWith("\x1b]133;B\x07\x1b]133;C\x07"));
 	assert.equal(user.render(width), out, "cached while unchanged");
 });
 
@@ -367,4 +376,105 @@ test("thinking label uses the public setHiddenThinkingLabel API and fails safe",
 			},
 		}),
 	);
+});
+
+// 1x1 PNG
+const PNG_1X1 =
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+function finishWithImage(tool: ToolExecutionComponent) {
+	tool.updateResult(
+		{
+			content: [
+				{ type: "text", text: "Read image file [image/png]" },
+				{ type: "image", data: PNG_1X1, mimeType: "image/png" },
+			],
+			isError: false,
+		} as never,
+		false,
+	);
+}
+
+test("image results are framed on every terminal; image rows only gain the left rail", () => {
+	const original = getCapabilities();
+	try {
+		for (const images of [null, "kitty", "iterm2"] as const) {
+			setCapabilities({ ...original, images });
+			for (const renderShell of ["default", "self"] as const) {
+				const tool = makeTool({ renderShell, body: "Read image file [image/png]" });
+				finishWithImage(tool);
+				const width = 60;
+				const inner = stockToolRender.call(tool, width - 3);
+				const out = tool.render(width);
+				const label = `${images ?? "no-images"}/${renderShell}`;
+
+				assert.equal(out.length, inner.length + 2, `${label}: title and bottom rows added`);
+				assert.match(strip(out[1]!), /^╭─ ✓ READ FILE · COMPLETE ─+╮$/, label);
+				assert.match(strip(out.at(-1)!), /^╰─+╯$/, label);
+				// Expected image rows come from the stock output and the protocol under test, not from
+				// the renderer's own classifier.
+				const protocolPrefix = images === "kitty" ? "\x1b_G" : images === "iterm2" ? "\x1b]1337;File=" : undefined;
+				const isImageRow = (line: string) => protocolPrefix !== undefined && line.includes(protocolPrefix);
+				const imageRows = inner.filter(isImageRow);
+				assert.equal(imageRows.length, images ? 1 : 0, `${label}: Pi drew the image as expected`);
+				for (let i = 1; i < inner.length; i++) {
+					const line = out[i + 1]!;
+					if (isImageRow(inner[i]!)) {
+						assert.ok(line.endsWith(inner[i]!), `${label}: image row ${i} passed through untouched`);
+						assert.equal(strip(line.slice(0, line.length - inner[i]!.length)), "┃ ", `${label}: left rail only`);
+					} else {
+						assert.equal(visibleWidth(line), width, `${label}: row ${i} fills the card`);
+						assert.ok(strip(line).startsWith("┃ ") && strip(line).endsWith("│"), `${label}: row ${i} has both rails`);
+						assert.ok(line.includes(inner[i]!), `${label}: row ${i} content unchanged`);
+					}
+				}
+			}
+		}
+	} finally {
+		setCapabilities(original);
+	}
+});
+
+test("short text rows are padded so the right rail lines up", () => {
+	// Pi's image spacer and the Kitty placeholder rows under a picture are "" (not padded).
+	const original = getCapabilities();
+	try {
+		setCapabilities({ ...original, images: "kitty" });
+		const tool = makeTool({ body: "Read image file [image/png]" });
+		finishWithImage(tool);
+		const width = 40;
+		const inner = stockToolRender.call(tool, width - 3);
+		const shortRows = inner
+			.map((line, i) => [line, i] as const)
+			.filter(([line, i]) => i > 0 && !line.includes("\x1b_G") && visibleWidth(line) < width - 3);
+		assert.ok(shortRows.length > 0, "fixture has a body row narrower than the card");
+		const card = tool.render(width);
+		for (const [, i] of shortRows) {
+			assert.equal(visibleWidth(card[i + 1]!), width, `row ${i} padded to the card width`);
+			assert.ok(strip(card[i + 1]!).endsWith("│"), `row ${i} ends with the right rail`);
+		}
+	} finally {
+		setCapabilities(original);
+	}
+});
+
+test("rows wider than the card are clipped so the right rail stays inside", () => {
+	const wide: Component = { render: () => ["x".repeat(200), "漢🌸".repeat(80)], invalidate() {} };
+	const tool = new ToolExecutionComponent(
+		"read_file",
+		"call-wide",
+		{ path: "a.ts" },
+		{},
+		{ renderShell: "self", renderCall: () => wide, renderResult: () => textComponent("ok") },
+		ui,
+		"/tmp",
+	);
+	finish(tool, false);
+	for (const width of [20, 40, 61]) {
+		const card = tool.render(width);
+		for (const line of card.slice(1)) {
+			assert.ok(visibleWidth(line) <= width, `width ${width}: ${visibleWidth(line)}`);
+			assert.ok(/[│╮╯]$/.test(strip(line)), `width ${width}: row keeps its right edge`);
+		}
+	}
 });
