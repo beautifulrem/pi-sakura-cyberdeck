@@ -430,7 +430,12 @@ export default function (pi: ExtensionAPI) {
 		if (owned) ctx.ui.setFooter(undefined);
 	};
 
-	const applyConfiguredUi = (ctx: ExtensionContext): ApplyUiResult => {
+	/**
+	 * `claimFooter`: install our footer if it is missing. Only session start and an explicit
+	 * status-line enable claim it; once another extension has replaced it, other settings
+	 * changes must not silently take it back.
+	 */
+	const applyConfiguredUi = (ctx: ExtensionContext, claimFooter: boolean): ApplyUiResult => {
 		const result: ApplyUiResult = { editorBlocked: false };
 		if (!isTuiContext(ctx)) return result;
 		activeTheme = ctx.ui.theme;
@@ -447,7 +452,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (currentConfig.features.statusLine) {
-			installStatusLine(ctx);
+			if (claimFooter) installStatusLine(ctx);
 		} else if (footerInstalled) {
 			uninstallStatusLine(ctx);
 		}
@@ -518,7 +523,7 @@ export default function (pi: ExtensionAPI) {
 		installedEditorFactory = undefined;
 		syncState(state, ctx);
 		stopProjectRefresh();
-		applyConfiguredUi(ctx);
+		applyConfiguredUi(ctx, true);
 		refresh();
 	};
 
@@ -598,7 +603,7 @@ export default function (pi: ExtensionAPI) {
 		setUiFeatures(patch: Partial<UiFeaturesConfig>, ctx: ExtensionContext) {
 			const thinkingTrail = currentConfig.features.thinkingTrail;
 			applyConfig(saveUiFeaturesPatch(patch));
-			const result = applyConfiguredUi(ctx);
+			const result = applyConfiguredUi(ctx, patch.statusLine === true);
 			// Pi's Markdown caches lines by text+width and re-runs transformers only on a miss:
 			// displayed thinking keeps its old form unless every component is invalidated.
 			if (currentConfig.features.thinkingTrail !== thinkingTrail && sessionLifecycle.isCurrent()) {

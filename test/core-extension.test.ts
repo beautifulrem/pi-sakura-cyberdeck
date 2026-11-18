@@ -170,6 +170,12 @@ test("a footer replaced by another extension is released, not deleted", async ()
 		await emit("tool_execution_end", {}, session.ctx);
 		assert.equal(session.trustChecks(), checks, "no project probes for an invisible footer");
 
+		// Unrelated feature toggles must not silently take the footer back.
+		await run("copy-friendly toggle", session.ctx);
+		await run("thinking toggle", session.ctx);
+		await run("thinking toggle", session.ctx);
+		assert.equal(session.footerFactory(), other, "unrelated toggles leave the other footer");
+
 		await run("statusline disable", session.ctx);
 		assert.equal(session.footerFactory(), other, "disabling Zentui's status line keeps theirs");
 
