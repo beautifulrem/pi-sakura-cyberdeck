@@ -50,7 +50,7 @@ pi install npm:pi-sakura-cyberdeck
 
 ## 只加载部分组件
 
-在 `~/.pi/agent/settings.json` 里把包来源写成对象，可以按需过滤：
+在 `~/.pi/agent/settings.json` 里把包来源写成对象，可以按需过滤。`source` 保持你设置里原来的写法（比如 Git 来源，或者 `npm:pi-sakura-cyberdeck@1.5.2` 这样锁定版本的写法）；改了它就等于装了另一个包，而不是过滤现有的这个。
 
 ```jsonc
 {

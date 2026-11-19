@@ -174,7 +174,7 @@ Or start with `pi --tui-mode fullscreen`. Pack styling (editor chrome, footer, s
 
 ### Load only some pieces
 
-Pi can filter a package's resources. Replace the plain source string in `~/.pi/agent/settings.json` with an object:
+Pi can filter a package's resources. Replace the plain source string in `~/.pi/agent/settings.json` with an object. Keep `source` exactly as it is in your settings (a Git source, or an npm version pin such as `npm:pi-sakura-cyberdeck@1.5.2`); changing it installs a different package rather than filtering the one you have.
 
 ```jsonc
 {
