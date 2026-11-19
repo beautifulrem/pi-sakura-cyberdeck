@@ -7,8 +7,10 @@
 ## 快速开始
 
 ```bash
-pi install git:github.com/beautifulrem/pi-sakura-cyberdeck
+pi install npm:pi-sakura-cyberdeck
 ```
+
+也可以从 Git 安装：`pi install git:github.com/beautifulrem/pi-sakura-cyberdeck`。两种来源 Pi 会当成两个不同的包，只装一个；要换来源，先 `pi remove` 旧的。
 
 然后在 `/settings` 里把主题选成 **sakura-macaron**，重启一次 Pi。
 
@@ -54,7 +56,7 @@ pi install git:github.com/beautifulrem/pi-sakura-cyberdeck
 {
   "packages": [
     {
-      "source": "git:github.com/beautifulrem/pi-sakura-cyberdeck",
+      "source": "npm:pi-sakura-cyberdeck",
       // 不要启动画面和数字雨
       "extensions": ["extensions/*/index.ts", "!extensions/header/index.ts", "!extensions/matrix/index.ts"]
     }
