@@ -7,7 +7,7 @@ Lightweight Sakura Macaron visual pack for [Pi](https://pi.dev): a pastel theme,
 ## Quick start
 
 ```bash
-pi install git:github.com/beautifulrem/pi-sakura-cyberdeck
+pi install npm:pi-sakura-cyberdeck
 ```
 
 Then pick the theme in `/settings` → **sakura-macaron** and restart Pi once. Details: [Install](#install).
@@ -107,9 +107,19 @@ Other editor extensions (e.g. `pi-fff`) keep their input and autocomplete inside
 
 ## Install
 
+From npm:
+
+```bash
+pi install npm:pi-sakura-cyberdeck
+```
+
+From Git:
+
 ```bash
 pi install git:github.com/beautifulrem/pi-sakura-cyberdeck
 ```
+
+Pi treats the npm and Git sources as different packages, so install from one only. To switch, `pi remove` the old source first.
 
 Local:
 
@@ -123,18 +133,22 @@ Then `/settings` → theme **sakura-macaron** (Pi 0.99 defaults to its `system` 
 
 ### Updating
 
-For an unpinned Git installation:
+For an unpinned installation:
 
 ```bash
+pi update npm:pi-sakura-cyberdeck
+# or, if you installed from Git
 pi update git:github.com/beautifulrem/pi-sakura-cyberdeck
 ```
 
 Restart Pi after updating. Pi **>= 1.5.0** shows what changed under **Extension Updates** on the next fresh launch (its own package-changelog notice, condensed when `collapseChangelog` is set). On older Pi versions, use `/sakura-changelog`; the command always opens the full changelog inside Pi. See also [CHANGELOG.md](CHANGELOG.md).
 
-Pi does not push package updates automatically. Users who pinned a tag or commit must explicitly select the new version:
+Pi does not push package updates automatically. Users who pinned a version, tag or commit must explicitly select the new version:
 
 ```bash
-pi install git:github.com/beautifulrem/pi-sakura-cyberdeck@v1.2.0
+pi install npm:pi-sakura-cyberdeck@1.5.2
+# or
+pi install git:github.com/beautifulrem/pi-sakura-cyberdeck@v1.5.2
 ```
 
 Notes for 1.2.0:
@@ -160,13 +174,13 @@ Or start with `pi --tui-mode fullscreen`. Pack styling (editor chrome, footer, s
 
 ### Load only some pieces
 
-Pi can filter a package's resources. Replace the plain source string in `~/.pi/agent/settings.json` with an object:
+Pi can filter a package's resources. Replace the plain source string in `~/.pi/agent/settings.json` with an object. Keep `source` exactly as it is in your settings (a Git source, or an npm version pin such as `npm:pi-sakura-cyberdeck@1.5.2`); changing it installs a different package rather than filtering the one you have.
 
 ```jsonc
 {
   "packages": [
     {
-      "source": "git:github.com/beautifulrem/pi-sakura-cyberdeck",
+      "source": "npm:pi-sakura-cyberdeck",
       // everything except the startup header and matrix rain
       "extensions": ["extensions/*/index.ts", "!extensions/header/index.ts", "!extensions/matrix/index.ts"]
     }
