@@ -4,12 +4,25 @@
   "description": "Lightweight Sakura Macaron visual pack for Pi: theme, cyberdeck header, macaron Zentui chrome, Claude-style shimmer, optional matrix rain.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beautifulrem/pi-sakura-cyberdeck.git"
+  },
+  "homepage": "https://github.com/beautifulrem/pi-sakura-cyberdeck#readme",
+  "bugs": {
+    "url": "https://github.com/beautifulrem/pi-sakura-cyberdeck/issues"
+  },
   "keywords": [
     "pi-package",
     "pi-theme",
     "pi-extension",
     "tui",
-    "sakura"
+    "sakura",
+    "pi-coding-agent",
+    "theme",
+    "terminal-theme",
+    "pastel",
+    "nerd-font"
   ],
   "files": [
     "extensions",
@@ -45,6 +58,7 @@
     ],
     "themes": [
       "./themes/sakura-macaron.json"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/beautifulrem/pi-sakura-cyberdeck/main/docs/screenshots/session.png"
   }
 }
