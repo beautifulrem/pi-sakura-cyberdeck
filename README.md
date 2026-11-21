@@ -95,6 +95,7 @@ Other editor extensions (e.g. `pi-fff`) keep their input and autocomplete inside
 - One step per thinking paragraph, first line only; rails/`◇` in the sakura gradient, body in the thinking tint
 - Wrapped rows keep their `│` rail, including long inline code, URLs, backticks and math; each digest row is literal text rather than reparsed Markdown. Long trails cap at 16 rows, then `╰─ … +N more`. Very narrow widths fall back to Pi's normal thinking render.
 - Display-only via Pi's public markdown transformer; the session and model context keep the full thinking text
+- Reasoning a model writes into its answer as `<thinking>…</thinking>` (also `<think>` / `<thought>`, common with Gemini) gets the same trail; only line-start tags outside code fences count
 
 ## Requirements
 

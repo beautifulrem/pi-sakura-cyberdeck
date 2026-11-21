@@ -14,6 +14,11 @@ import { renderSakuraGradient, renderSakuraGradientOpen } from "./gradient";
  *
  * We wrap step text ourselves (instead of letting Markdown wrap it) so every continuation
  * row keeps its `│`/` ` rail and the tree never breaks at a soft wrap.
+ *
+ * Some models (notably Gemini behind OpenAI-compatible endpoints) write their reasoning into
+ * the answer text as `<thinking>…</thinking>` instead of a structured thinking block. Pi then
+ * renders the tags literally. For `assistant` text we lift such tagged blocks into the same
+ * trail, again display-only.
  */
 
 const DEFAULT_WIDTH = 100;
@@ -101,11 +106,119 @@ export function buildThinkingTrail(markdown: string, availableWidth = DEFAULT_WI
 	return lines.join(HARD_BREAK);
 }
 
+export type TaggedSegment =
+	| { kind: "text"; text: string }
+	| { kind: "thinking"; body: string; raw: string; closed: boolean };
+
+/** Tag names models use for inline reasoning. */
+const THINKING_TAG = /^[ \t]{0,3}<(thinking|think|thought)>/i;
+const FENCE_OPEN = /^[ ]{0,3}(`{3,}|~{3,})/;
+
+function closesFence(line: string, fence: string): boolean {
+	const match = /^[ ]{0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+	return !!match && match[1]![0] === fence[0] && match[1]!.length >= fence.length;
+}
+
+/**
+ * Split assistant text into plain text and `<thinking>` blocks. An opening tag only counts at
+ * the start of a line (up to three spaces of indent) outside fenced code, so prose or code that
+ * merely mentions the tag is left alone. Returns `undefined` when there is no tagged block.
+ */
+export function splitTaggedThinking(markdown: string): TaggedSegment[] | undefined {
+	const segments: TaggedSegment[] = [];
+	let textStart = 0;
+	let pos = 0;
+	let fence: string | undefined;
+	let found = false;
+	while (pos < markdown.length) {
+		const newline = markdown.indexOf("\n", pos);
+		const end = newline === -1 ? markdown.length : newline;
+		const line = markdown.slice(pos, end);
+		if (fence) {
+			if (closesFence(line, fence)) fence = undefined;
+		} else {
+			const fenceOpen = FENCE_OPEN.exec(line);
+			const open = fenceOpen ? null : THINKING_TAG.exec(line);
+			if (fenceOpen) {
+				fence = fenceOpen[1];
+			} else if (open) {
+				found = true;
+				if (pos > textStart) segments.push({ kind: "text", text: markdown.slice(textStart, pos) });
+				const bodyStart = pos + open[0].length;
+				const close = new RegExp(`</${open[1]}\\s*>`, "i").exec(markdown.slice(bodyStart));
+				if (!close) {
+					segments.push({
+						kind: "thinking",
+						body: markdown.slice(bodyStart),
+						raw: markdown.slice(pos),
+						closed: false,
+					});
+					return segments;
+				}
+				const closeEnd = bodyStart + close.index + close[0].length;
+				segments.push({
+					kind: "thinking",
+					body: markdown.slice(bodyStart, bodyStart + close.index),
+					raw: markdown.slice(pos, closeEnd),
+					closed: true,
+				});
+				// Continue on whatever follows the closing tag, as if it began a line.
+				pos = textStart = closeEnd;
+				continue;
+			}
+		}
+		if (newline === -1) break;
+		pos = newline + 1;
+	}
+	if (!found) return undefined;
+	if (textStart < markdown.length) segments.push({ kind: "text", text: markdown.slice(textStart) });
+	return segments;
+}
+
+/** Drop the blank lines around a text piece, keeping leading indentation (indented code). */
+function trimBlankLines(text: string): string {
+	return text.replace(/^(?:[ \t]*\r?\n)+/, "").trimEnd();
+}
+
+/**
+ * Replace `<thinking>` blocks in assistant text with trails. An unclosed block becomes a trail
+ * while streaming (the model is still thinking) and stays literal once the message is final.
+ */
+export function buildTaggedThinkingTrail(
+	markdown: string,
+	availableWidth = DEFAULT_WIDTH,
+	isStreaming = false,
+): string | undefined {
+	const segments = splitTaggedThinking(markdown);
+	if (!segments) return undefined;
+	const pieces: string[] = [];
+	for (const segment of segments) {
+		if (segment.kind === "text") {
+			pieces.push(trimBlankLines(segment.text));
+			continue;
+		}
+		if (!segment.closed && !isStreaming) {
+			pieces.push(trimBlankLines(segment.raw));
+			continue;
+		}
+		// An empty `<thinking></thinking>` simply disappears.
+		if (thinkingSteps(segment.body).length === 0) continue;
+		const trail = buildThinkingTrail(segment.body, availableWidth);
+		// Too narrow for the rails: let Pi render the original text.
+		if (trail === undefined) return undefined;
+		pieces.push(trail);
+	}
+	return pieces.filter((piece) => piece.length > 0).join("\n\n");
+}
+
 export function makeThinkingTrailTransformer(isEnabled: () => boolean): MarkdownTransformer {
 	return (markdown: string, context: MarkdownTransformContext): string => {
-		if (context.messageType !== "assistant-thinking") return markdown;
+		if (context.messageType !== "assistant-thinking" && context.messageType !== "assistant") return markdown;
 		if (!isEnabled()) return markdown;
 		try {
+			if (context.messageType === "assistant") {
+				return buildTaggedThinkingTrail(markdown, context.availableWidth, context.isStreaming) ?? markdown;
+			}
 			return buildThinkingTrail(markdown, context.availableWidth) ?? markdown;
 		} catch {
 			// A transformer that throws keeps the partial output; return the original instead.
@@ -127,7 +240,7 @@ export function registerThinkingTrail(
 	if (typeof pi.registerMarkdownTransformer !== "function") return;
 	try {
 		pi.registerMarkdownTransformer(makeThinkingTrailTransformer(isEnabled), {
-			messageTypes: ["assistant-thinking"],
+			messageTypes: ["assistant-thinking", "assistant"],
 		});
 	} catch {
 		// Older/alternate hosts: leave thinking rendering to Pi.

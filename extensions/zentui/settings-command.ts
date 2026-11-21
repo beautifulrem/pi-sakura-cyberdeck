@@ -124,7 +124,7 @@ const featureSettingDescriptions: Record<FeatureSettingId, string> = {
 	messageStyle:
 		"Style previous user messages, tool blocks, thinking labels and selector borders. Independent of the editor.",
 	thinkingTrail:
-		"Collapse visible thinking blocks into a compact \"✦ Thought trail\" digest. Display-only; Ctrl+T still toggles thinking.",
+		"Collapse visible thinking blocks (and <thinking> tags in replies) into a compact \"✦ Thought trail\" digest. Display-only; Ctrl+T still toggles thinking.",
 	copyFriendly:
 		"Hide editor and previous-message rail glyphs for cleaner native terminal selection.",
 };
