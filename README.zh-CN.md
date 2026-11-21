@@ -38,7 +38,7 @@ pi install npm:pi-sakura-cyberdeck
 - **底栏**：上下文用量条、token 和费用统计与 Pi 自带底栏一致；显示 git 分支和运行时版本。`/zentui pulse on` 可在工作时让渐变动起来。
 - **工具卡片**：标题一条连续的樱花渐变，状态始终写明（`RUNNING` / `COMPLETE` / `FAILED`）；`edit` 显示 `+N −M` 行数；工具输出保持 Pi 原样，不重新上色。
 - **Bash 命令头**：用 `❯` 提示符和 Pi 自带的 Shell 语法高亮，长命令折叠成五行。
-- **Thought trail**：把可见的思考过程压缩成树状摘要，每段一行；只影响显示，模型上下文保持完整。
+- **Thought trail**：把可见的思考过程压缩成树状摘要，每段一行；只影响显示，模型上下文保持完整。模型（常见于 Gemini）把推理写进正文的 `<thinking>…</thinking>` 也会显示为 Thought trail。
 
 ## 要求
 

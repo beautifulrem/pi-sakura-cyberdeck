@@ -3,6 +3,16 @@
 All notable changes to pi-sakura-cyberdeck. Pi >= 1.5.0 shows new package entries
 once after updating; run `/sakura-changelog` on any supported Pi to read this file.
 
+## [Unreleased]
+
+### Fixed
+
+- Reasoning that a model writes into its answer as `<thinking>…</thinking>` (also `<think>` and
+  `<thought>`), as Gemini often does behind OpenAI-compatible endpoints, is now shown as a
+  `✦ Thought trail` instead of literal tags. Only tags at the start of a line outside fenced code
+  count; an unclosed tag is a trail while streaming and stays literal once the message is final.
+  Display-only, and `/zentui thinking-trail off` keeps Pi's stock rendering.
+
 ## [1.5.2] - 2026-11-18
 
 ### Highlights
