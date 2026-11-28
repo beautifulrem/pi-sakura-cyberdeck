@@ -1,0 +1,97 @@
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run npm publish --dry-run without publishing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Install dev tooling
+        run: npm run dev:setup
+
+      - name: Check, typecheck, and test
+        run: npm run verify
+
+      - name: Check package tarball
+        run: npm run pack:check
+
+  publish:
+    name: Publish
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Required for npm OIDC Trusted Publishing and provenance
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Verify npm supports OIDC Trusted Publishing
+        run: |
+          node -e '
+            const [maj, min, pat] = process.argv[1].split(".").map(Number);
+            const ok = maj > 11 || (maj === 11 && (min > 5 || (min === 5 && pat >= 1)));
+            if (!ok) {
+              console.error(`npm ${process.argv[1]} is below required 11.5.1 for Trusted Publishing`);
+              process.exit(1);
+            }
+            console.log(`Using npm ${process.argv[1]} (OIDC Trusted Publishing supported)`);
+          ' "$(npm --version)"
+
+      - name: Verify release tag matches package.json
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          EXPECTED_TAG="v${PKG_VERSION}"
+          if [ "$RELEASE_TAG" != "$EXPECTED_TAG" ]; then
+            echo "::error::Release tag '${RELEASE_TAG}' does not match package.json version '${PKG_VERSION}' (expected '${EXPECTED_TAG}')."
+            exit 1
+          fi
+          echo "Release tag matches package.json version: ${EXPECTED_TAG}"
+
+      - name: Run package sanity check
+        run: npm run check
+
+      - name: Publish to npm (dry run)
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        run: npm publish --access public --dry-run
+
+      - name: Publish to npm via OIDC Trusted Publishing
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
+        run: npm publish --access public
