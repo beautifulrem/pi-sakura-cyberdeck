@@ -18,7 +18,7 @@ Then pick the theme in `/settings` → **sakura-macaron** and restart Pi once. D
   <sub>Real Pi 1.5.2 session rendered by this pack (scripted demo model; GohuFont uni14 Nerd Font Mono).</sub>
 </p>
 
-**v1.5.2** — frames every tool card (image results included), brings back Pi's bash-mode and scroll cues in the Sakura editor frame, and hardens the footer, settings, changelog viewer, matrix rain and shimmer. See [what changed](#152).
+**v1.5.3** — turns inline `<thinking>` / `<think>` / `<thought>` tags in replies into Thought trails, and publishes to npm via GitHub Actions OIDC Trusted Publishing. See [what changed](#153).
 
 ## What’s inside
 
@@ -147,9 +147,9 @@ Restart Pi after updating. Pi **>= 1.5.0** shows what changed under **Extension 
 Pi does not push package updates automatically. Users who pinned a version, tag or commit must explicitly select the new version:
 
 ```bash
-pi install npm:pi-sakura-cyberdeck@1.5.2
+pi install npm:pi-sakura-cyberdeck@1.5.3
 # or
-pi install git:github.com/beautifulrem/pi-sakura-cyberdeck@v1.5.2
+pi install git:github.com/beautifulrem/pi-sakura-cyberdeck@v1.5.3
 ```
 
 Notes for 1.2.0:
@@ -175,7 +175,7 @@ Or start with `pi --tui-mode fullscreen`. Pack styling (editor chrome, footer, s
 
 ### Load only some pieces
 
-Pi can filter a package's resources. Replace the plain source string in `~/.pi/agent/settings.json` with an object. Keep `source` exactly as it is in your settings (a Git source, or an npm version pin such as `npm:pi-sakura-cyberdeck@1.5.2`); changing it installs a different package rather than filtering the one you have.
+Pi can filter a package's resources. Replace the plain source string in `~/.pi/agent/settings.json` with an object. Keep `source` exactly as it is in your settings (a Git source, or an npm version pin such as `npm:pi-sakura-cyberdeck@1.5.3`); changing it installs a different package rather than filtering the one you have.
 
 ```jsonc
 {
@@ -239,20 +239,17 @@ Avoid stacking with `pi-zentui`, `pi-powerline-footer`, stock `pi-claude-shimmer
 
 Full history: [CHANGELOG.md](CHANGELOG.md) (also available in Pi via `/sakura-changelog`).
 
-### 1.5.2
+### 1.5.3
 
-- Tool cards with image results (`read` of a PNG on a vision model, browser screenshots) are framed
-  like every other card; terminal image rows only gain the left rail.
-- The framed editor shows Pi's bash-mode colour while the prompt starts with `!`, and keeps the
-  `↑/↓ N more` scroll labels. Sent prompts keep Pi's OSC 133 prompt markers at line start.
-- Footer: right side (context, tokens, cost) survives narrow terminals; virtual models show context;
-  literal `|` separators keep neighbouring colours; another extension's footer is never removed;
-  fewer git/runtime probes.
-- Settings, `/sakura-changelog`, matrix rain and shimmer fixes. See [CHANGELOG.md](CHANGELOG.md).
+- Reasoning that a model writes into its answer as `<thinking>…</thinking>` (also `<think>` and
+  `<thought>`, common with Gemini behind OpenAI-compatible endpoints) is now shown as a
+  `✦ Thought trail` instead of literal tags (display-only; `/zentui thinking-trail off` keeps
+  Pi's stock rendering).
+- Added GitHub Actions CI and npm Trusted Publishing (OIDC) with automatic provenance.
 
 ### Earlier versions
 
-See [CHANGELOG.md](CHANGELOG.md) for 1.0.0 – 1.5.1.
+See [CHANGELOG.md](CHANGELOG.md) for 1.0.0 – 1.5.2.
 
 ## Development
 

@@ -3,7 +3,14 @@
 All notable changes to pi-sakura-cyberdeck. Pi >= 1.5.0 shows new package entries
 once after updating; run `/sakura-changelog` on any supported Pi to read this file.
 
-## [Unreleased]
+## [1.5.3] - 2026-11-28
+
+### Highlights
+
+- **Tagged thinking trails**: inline `<thinking>…</thinking>` (and `<think>` / `<thought>`) tags
+  written into assistant replies now render as a `✦ Thought trail`.
+- **npm Trusted Publishing (OIDC)**: automated GitHub Actions CI and OIDC release publishing with
+  provenance attestations.
 
 ### Fixed
 
@@ -12,6 +19,11 @@ once after updating; run `/sakura-changelog` on any supported Pi to read this fi
   `✦ Thought trail` instead of literal tags. Only tags at the start of a line outside fenced code
   count; an unclosed tag is a trail while streaming and stays literal once the message is final.
   Display-only, and `/zentui thinking-trail off` keeps Pi's stock rendering.
+
+### Development
+
+- Added GitHub Actions CI (`ci.yml`) and npm Trusted Publishing via OIDC (`publish.yml`) with
+  automatic provenance.
 
 ## [1.5.2] - 2026-11-18
 
